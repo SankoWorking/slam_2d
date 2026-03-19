@@ -59,7 +59,6 @@ void SerialReaderNode::parseThread() {
     RCLCPP_INFO(this->get_logger(), "Parse Thread Started");
     std::vector<uint8_t> work_buffer;
     work_buffer.reserve(1024);
-    uint8_t bcc = 0x00;
 
     while (rclcpp::ok() && running_) {
         std::vector<uint8_t> incomming_data;
@@ -67,7 +66,6 @@ void SerialReaderNode::parseThread() {
             std::unique_lock<std::mutex> lock(buffer_mutex_);
             buffer_cond_.wait(lock, [this] {return data_ready_ || !running_;});
             
-
             if (!running_) break;
 
             incomming_data.swap(shared_buffer_);
@@ -81,25 +79,11 @@ void SerialReaderNode::parseThread() {
         const size_t FRAME_LEN = FRAME_SIZE;
         while (work_buffer.size() >= FRAME_LEN) {
             if (work_buffer[0] == 0x7B && work_buffer[23] == 0x7D) {
-                auto bcc_end = work_buffer.begin() + FRAME_SIZE - 2;
-                for (auto i = work_buffer.begin(); i != bcc_end; ++i) {
-                    bcc ^= *i;
-                }
-
-                if (bcc == *(work_buffer.begin() + FRAME_SIZE - 2)) {
-                    std::stringstream ss;
-                    ss << "Frame: [ ";
-                    for (size_t i = 0; i<24; ++i) {
-                        ss << std::hex << std::setw(2) << std::setfill('0') << (int)work_buffer[i] << " ";
-                    }
-                    ss << "]";
-                    RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
-
-                    work_buffer.erase(work_buffer.begin(), work_buffer.begin() + FRAME_SIZE);
+                if (checkBCC(work_buffer.begin(), work_buffer.begin() + FRAME_SIZE - 2)) {
+                    processFrame(work_buffer);
                 }else {
                     work_buffer.erase(work_buffer.begin());
                 }
-                bcc = 0x00;
             }else {
                  work_buffer.erase(work_buffer.begin());
             }
@@ -107,6 +91,29 @@ void SerialReaderNode::parseThread() {
     }
 }
 
+bool SerialReaderNode::checkBCC(std::vector<uint8_t>::iterator first, std::vector<uint8_t>::iterator last) {
+    uint8_t bcc = 0x00;
+    for (auto i = first; i != last; ++i) {
+        bcc ^= *i;
+    }
+    if (bcc == *last) {
+        return true;
+    }else {
+        return false;
+    }
+}
+
+void SerialReaderNode::processFrame(std::vector<uint8_t>& buffer) {
+    std::stringstream ss;
+    ss << "Frame: [ ";
+    for (size_t i = 0; i<24; ++i) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
+    }
+    ss << "]";
+    RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
+
+    buffer.erase(buffer.begin(), buffer.begin() + FRAME_SIZE);
+}
 
 int main(int argc, char * argv[]) {
     rclcpp::init(argc, argv);

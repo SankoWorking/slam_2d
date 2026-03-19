@@ -18,7 +18,8 @@ public:
 private:
     void readThread();
     void parseThread();
-
+    bool checkBCC(std::vector<uint8_t>::iterator first, std::vector<uint8_t>::iterator last);
+    void processFrame(std::vector<uint8_t>& buffer);
     LibSerial::SerialPort serial_port_;
     std::mutex buffer_mutex_;
     std::condition_variable buffer_cond_;
@@ -27,6 +28,7 @@ private:
     std::atomic<bool> running_;
     std::atomic<bool> data_ready_;
     std::vector<uint8_t> shared_buffer_;
+    
 };
 
 #endif
