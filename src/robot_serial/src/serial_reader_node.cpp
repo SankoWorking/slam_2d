@@ -4,7 +4,9 @@ SerialReaderNode::SerialReaderNode () : Node("serial_reader_node"){
     running_ = true;
     data_ready_ = false;
     shared_buffer_.reserve(1024);
-
+    node_clock_ = this->get_clock();
+    vel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("velocity", 10);
+    imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("imu/data_raw", 10);
     try {
         serial_port_.Open("/dev/ttyACM0");
         serial_port_.SetBaudRate(LibSerial::BaudRate::BAUD_115200);
@@ -103,14 +105,40 @@ bool SerialReaderNode::checkBCC(std::vector<uint8_t>::iterator first, std::vecto
     }
 }
 
+int16_t SerialReaderNode::calVel(uint8_t high, uint8_t low) {
+    return (int16_t)((high << 8) | low);
+}
+
+float SerialReaderNode::calAcc(uint8_t high, uint8_t low) {
+    int16_t raw_value = static_cast<int16_t>((high << 8) | low);
+    return raw_value / 1672.0f;
+}
+
+float SerialReaderNode::calAng(uint8_t high, uint8_t low) {
+    int16_t raw_value = static_cast<int16_t>((high << 8) | low);
+    return raw_value / 3753.0f;
+}
+
 void SerialReaderNode::processFrame(std::vector<uint8_t>& buffer) {
-    std::stringstream ss;
-    ss << "Frame: [ ";
-    for (size_t i = 0; i<24; ++i) {
-        ss << std::hex << std::setw(2) << std::setfill('0') << (int)buffer[i] << " ";
-    }
-    ss << "]";
-    RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
+    auto vel_msg = geometry_msgs::msg::TwistStamped();
+    auto imu_msg = sensor_msgs::msg::Imu();
+    auto now = node_clock_->now();
+    vel_msg.header.stamp = now;
+    vel_msg.twist.linear.x = calVel(buffer[2], buffer[3]);
+    vel_msg.twist.linear.y = calVel(buffer[4], buffer[5]);
+    vel_msg.twist.linear.z = calVel(buffer[6], buffer[7]);
+
+    imu_msg.header.stamp = now;
+    imu_msg.linear_acceleration.x = calAcc(buffer[8], buffer[9]);
+    imu_msg.linear_acceleration.y = calAcc(buffer[10], buffer[11]);
+    imu_msg.linear_acceleration.z = calAcc(buffer[12], buffer[13]);
+    imu_msg.angular_velocity.x = calAng(buffer[14], buffer[15]);
+    imu_msg.angular_velocity.y = calAng(buffer[16], buffer[17]);
+    imu_msg.angular_velocity.z = calAng(buffer[18], buffer[19]);
+
+
+    vel_pub_->publish(vel_msg);
+    imu_pub_->publish(imu_msg);
 
     buffer.erase(buffer.begin(), buffer.begin() + FRAME_SIZE);
 }

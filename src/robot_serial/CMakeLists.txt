@@ -8,6 +8,8 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 #libserial的存储路经有特殊性，所以使用此方法导入包
 find_package(PkgConfig REQUIRED)
@@ -24,7 +26,9 @@ target_include_directories(serial_reader_node PUBLIC
 )
 
 ament_target_dependencies(serial_reader_node
-  rclcpp
+  "rclcpp"
+  "geometry_msgs"
+  "sensor_msgs"
 )
 
 install(TARGETS
