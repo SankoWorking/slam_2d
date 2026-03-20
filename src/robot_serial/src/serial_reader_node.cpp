@@ -127,8 +127,12 @@ void SerialReaderNode::processFrame(std::vector<uint8_t>& buffer) {
     vel_msg.twist.linear.x = calVel(buffer[2], buffer[3]);
     vel_msg.twist.linear.y = calVel(buffer[4], buffer[5]);
     vel_msg.twist.linear.z = calVel(buffer[6], buffer[7]);
+    vel_msg.twist.angular.x = calAng(buffer[14], buffer[15]);
+    vel_msg.twist.angular.y = calAng(buffer[16], buffer[17]);
+    vel_msg.twist.angular.z = calAng(buffer[18], buffer[19]);
 
     imu_msg.header.stamp = now;
+    imu_msg.header.frame_id = "imu_link";
     imu_msg.linear_acceleration.x = calAcc(buffer[8], buffer[9]);
     imu_msg.linear_acceleration.y = calAcc(buffer[10], buffer[11]);
     imu_msg.linear_acceleration.z = calAcc(buffer[12], buffer[13]);
