@@ -40,9 +40,6 @@ void SerialReaderNode::readThread() {
             serial_port_.Read(temp_buffer, 24, 100);
             
             if (!temp_buffer.empty()) {
-                printf("Raw: ");
-                for (auto b : temp_buffer) printf("%02X", b);
-                printf("\n");
                 {
                     std::lock_guard<std::mutex> lock(buffer_mutex_);
                     shared_buffer_.insert(shared_buffer_.end(), temp_buffer.begin(), temp_buffer.end());
@@ -58,7 +55,6 @@ void SerialReaderNode::readThread() {
 }
 
 void SerialReaderNode::parseThread() {
-    RCLCPP_INFO(this->get_logger(), "Parse Thread Started");
     std::vector<uint8_t> work_buffer;
     work_buffer.reserve(1024);
 
@@ -73,7 +69,6 @@ void SerialReaderNode::parseThread() {
             incomming_data.swap(shared_buffer_);
             data_ready_ = false;
         }
-        RCLCPP_INFO(this->get_logger(), "Parse Thread Started!");
         if (!incomming_data.empty()) {
             work_buffer.insert(work_buffer.end(), incomming_data.begin(), incomming_data.end());
         }
@@ -124,9 +119,9 @@ void SerialReaderNode::processFrame(std::vector<uint8_t>& buffer) {
     auto imu_msg = sensor_msgs::msg::Imu();
     auto now = node_clock_->now();
     vel_msg.header.stamp = now;
-    vel_msg.twist.linear.x = calVel(buffer[2], buffer[3]);
-    vel_msg.twist.linear.y = calVel(buffer[4], buffer[5]);
-    vel_msg.twist.linear.z = calVel(buffer[6], buffer[7]);
+    vel_msg.twist.linear.x = calVel(buffer[2], buffer[3]) / 1000.0;
+    vel_msg.twist.linear.y = calVel(buffer[4], buffer[5]) / 1000.0;
+    vel_msg.twist.linear.z = calVel(buffer[6], buffer[7]) / 1000.0;
     vel_msg.twist.angular.x = calAng(buffer[14], buffer[15]);
     vel_msg.twist.angular.y = calAng(buffer[16], buffer[17]);
     vel_msg.twist.angular.z = calAng(buffer[18], buffer[19]);
