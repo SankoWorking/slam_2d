@@ -23,7 +23,7 @@ slam_toolbox:
     
     # 增大搜索范围，防止因里程计跳变导致匹配失败
     lookup_constraint_type: laser_scan
-    minimum_similarity_score: 0.25   # 最低匹配分值
+    minimum_similarity_score: 0.35   # 最低匹配分值
     angle_variance_penalty: 1.0      # 角度惩罚系数
     
     # 4. 闭环检测 (Loop Closure)

@@ -1,9 +1,12 @@
 #include "robot_odometry/odom_node.hpp"
 
 OdometryNode::OdometryNode() : Node("odometry_node") {
-    sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped> (
+    vel_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped> (
         "velocity", 10, std::bind(&OdometryNode::velocityCallback, this, std::placeholders::_1)
     );
+
+    imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
+            "imu/data", 10, std::bind(&OdometryNode::imuCallback, this, std::placeholders::_1));
 
     odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
 
@@ -12,21 +15,26 @@ OdometryNode::OdometryNode() : Node("odometry_node") {
     last_time_ = this->get_clock()->now();
 }
 
+void OdometryNode::imuCallback(const sensor_msgs::msg::Imu::SharedPtr msg) {
+    tf2::Quaternion q(
+        msg->orientation.x, msg->orientation.y,
+        msg->orientation.z, msg->orientation.w);
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+    
+    th_ = yaw;
+}
+
 void OdometryNode::velocityCallback(const geometry_msgs::msg::TwistStamped::SharedPtr msg) {
     rclcpp::Time current_time = msg->header.stamp;
     double dt = (current_time - last_time_).seconds();
-
     if (dt <= 0) { last_time_ = current_time; return; }
+
     double vx = msg->twist.linear.x;
     double vy = msg->twist.linear.y;
-    double vth = msg->twist.angular.z;
 
-    double delta_th = vth * dt;
-    double avg_th = th_ + (delta_th / 2.0);
-
-    x_ += (vx * cos(avg_th) - vy * sin(avg_th)) * dt;
-    y_ += (vx * sin(avg_th) + vy * cos(avg_th)) * dt;
-    th_ += delta_th;
+    x_ += (vx * cos(th_) - vy * sin(th_)) * dt;
+    y_ += (vx * sin(th_) + vy * cos(th_)) * dt;
 
     auto odom = nav_msgs::msg::Odometry();
     odom.header.stamp = current_time;
@@ -35,6 +43,7 @@ void OdometryNode::velocityCallback(const geometry_msgs::msg::TwistStamped::Shar
 
     odom.pose.pose.position.x = x_;
     odom.pose.pose.position.y = y_;
+
     tf2::Quaternion q;
     q.setRPY(0, 0, th_);
     odom.pose.pose.orientation.x = q.x();
@@ -42,23 +51,21 @@ void OdometryNode::velocityCallback(const geometry_msgs::msg::TwistStamped::Shar
     odom.pose.pose.orientation.z = q.z();
     odom.pose.pose.orientation.w = q.w();
 
+    odom.pose.covariance[0] = 0.01;
+    odom.pose.covariance[7] = 0.02;
+    odom.pose.covariance[35] = 0.001;
+
     odom.twist.twist.linear.x = vx;
     odom.twist.twist.linear.y = vy;
-    odom.twist.twist.angular.z = vth;
 
     odom_pub_->publish(odom);
 
-    
     geometry_msgs::msg::TransformStamped t;
-    t.header.stamp = current_time;
-    t.header.frame_id = "odom";
-    t.child_frame_id = "base_link";
+    t.header = odom.header;
+    t.child_frame_id = odom.child_frame_id;
     t.transform.translation.x = x_;
     t.transform.translation.y = y_;
-    t.transform.rotation.x = q.x();
-    t.transform.rotation.y = q.y();
-    t.transform.rotation.z = q.z();
-    t.transform.rotation.w = q.w();
+    t.transform.rotation = odom.pose.pose.orientation;
     tf_broadcaster_->sendTransform(t);
 
     last_time_ = current_time;
