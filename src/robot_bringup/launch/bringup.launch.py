@@ -12,7 +12,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(pkg_serial, 'launch', 'serial.launch.py'))),
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(pkg_imu, 'launch', 'imu_setup.launch.py'))),
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(pkg_lidar, 'launch', 'lidar_all.launch.py'))),
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(pkg_odom, 'launch', 'odom.launch.py'))),
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(pkg_imu, 'launch', 'imu.launch.py'))),
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(pkg_lidar, 'launch', 'lidar.launch.py'))),
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(os.path.join(pkg_odom, 'launch', 'odometry.launch.py'))),
     ])

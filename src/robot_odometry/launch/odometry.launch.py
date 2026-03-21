@@ -5,8 +5,8 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='robot_odometry',
-            executable='odom_node',
-            name='odom_node',
+            executable='odometry_node',
+            name='odometry_node',
             output='screen'
         )
     ])

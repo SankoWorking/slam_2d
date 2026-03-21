@@ -4,7 +4,7 @@ from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
-from launch.substitution import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     sllidar_dir = get_package_share_directory('sllidar_ros2')
