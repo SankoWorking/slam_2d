@@ -18,14 +18,14 @@ void OdometryNode::velocityCallback(const geometry_msgs::msg::TwistStamped::Shar
 
     if (dt <= 0) { last_time_ = current_time; return; }
     double vx = msg->twist.linear.x;
+    double vy = msg->twist.linear.y;
     double vth = msg->twist.angular.z;
 
-    double delta_x = (vx * cos(th_)) * dt;
-    double delta_y = (vx * sin(th_)) * dt;
     double delta_th = vth * dt;
+    double avg_th = th_ + (delta_th / 2.0);
 
-    x_ += delta_x;
-    y_ += delta_y;
+    x_ += (vx * cos(avg_th) - vy * sin(avg_th)) * dt;
+    y_ += (vx * sin(avg_th) + vy * cos(avg_th)) * dt;
     th_ += delta_th;
 
     auto odom = nav_msgs::msg::Odometry();
@@ -43,6 +43,7 @@ void OdometryNode::velocityCallback(const geometry_msgs::msg::TwistStamped::Shar
     odom.pose.pose.orientation.w = q.w();
 
     odom.twist.twist.linear.x = vx;
+    odom.twist.twist.linear.y = vy;
     odom.twist.twist.angular.z = vth;
 
     odom_pub_->publish(odom);
