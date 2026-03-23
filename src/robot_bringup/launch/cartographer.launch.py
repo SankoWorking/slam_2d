@@ -18,7 +18,7 @@ def generate_launch_description():
                 '-configuration_basename', 'slam.lua'
             ],
             remappings=[
-                ('/imu', '/imu/data'), # 根据你的 topic 调整
+                ('/imu', '/imu/data'),
                 ('/odom', '/odom')
             ]
         ),
@@ -26,6 +26,6 @@ def generate_launch_description():
             package='cartographer_ros',
             executable='cartographer_occupancy_grid_node',
             name='occupancy_grid_node',
-            parameters=[{'resolution': 0.05}] # 地图分辨率
+            parameters=[{'resolution': 0.05}]
         ),
     ])
