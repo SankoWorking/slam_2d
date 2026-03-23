@@ -8,7 +8,7 @@ def generate_launch_description():
             package='tf2_ros',
             executable='static_transform_publisher',
             name='imu_static_tf_pub',
-            arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'imu_link']
+            arguments=['-0.07', '0.02', '0.145', '0', '0', '0', 'base_link', 'imu_link']
         ),
 
         Node(

@@ -1,7 +1,6 @@
 slam_toolbox:
   ros__parameters:
-
-    # 1. 核心坐标系与话题
+    # 1. 基础坐标系
     odom_frame: odom
     map_frame: map
     base_frame: base_link
@@ -9,44 +8,45 @@ slam_toolbox:
     use_map_saver: true
     mode: mapping 
 
-    # 2. 传感器参数 (RPLidar C1 优化)
+    # 2. 传感器处理 (针对 C1 优化)
+    # 稍微缩小范围，剔除远端由于角度误差导致的不准点
     min_laser_range: 0.15
-    max_laser_range: 12.0
-    minimum_time_interval: 0.1
+    max_laser_range: 8.0     # 室内建图 8米足够，越远越容易引入噪点
+    minimum_time_interval: 0.05
     transform_timeout: 0.2
     tf_buffer_duration: 30.0
 
-    # 3. 扫描匹配控制 (针对无协方差里程计调优)
-    # 调低移动触发阈值，增加匹配频率以补偿里程计漂移
-    minimum_travel_distance: 0.05    # 移动 5cm 即更新
-    minimum_travel_heading: 0.05     # 旋转约 3度即更新
+    # 3. 扫描匹配 (Scan Matching) - 解决“糊”的关键
+    # 调高相似度要求，防止里程计漂移时强行更新错误的地图
+    minimum_similarity_score: 0.40   
+    link_match_minimum_response_fine: 0.8
     
-    # 增大搜索范围，防止因里程计跳变导致匹配失败
-    lookup_constraint_type: laser_scan
-    minimum_similarity_score: 0.35   # 最低匹配分值
-    angle_variance_penalty: 1.0      # 角度惩罚系数
-    
-    # 4. 闭环检测 (Loop Closure)
-    # 增强全局一致性，弥补底层位姿不准
-    do_loop_closing: true
-    loop_match_minimum_chain_size: 10
-    loop_match_maximum_variance_coarse: 3.5 # 放宽方差限制
-    loop_match_minimum_response_coarse: 0.35
-    loop_match_minimum_response_fine: 0.45
-    
-    # 空间限制，防止地图无限增长
-    scan_buffer_size: 15
-    scan_buffer_maximum_scan_distance: 10.0
+    # 针对全向机器人的运动补偿
+    # 减小移动触发阈值：全向轮平移灵敏，频繁小幅更新比大幅跳变更好
+    minimum_travel_distance: 0.03    # 3cm 即触发匹配
+    minimum_travel_heading: 0.03     # 约 2度即触发匹配
 
-    # 5. 地图与性能
-    resolution: 0.05
+    # 增加旋转惩罚：如果里程计说没转但雷达说转了，给角速度更多约束
+    angle_variance_penalty: 1.5      
+    calculate_covariance_module: true
+
+    # 4. 闭环检测 (Loop Closure) - 优化全局一致性
+    do_loop_closing: true
+    # 增加寻找闭环的搜索范围（针对里程计飘得远的情况）
+    loop_search_maximum_distance: 5.0
+    loop_match_minimum_chain_size: 15
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.45
+    loop_match_minimum_response_fine: 0.55
+
+    # 5. 地图精细度
+    resolution: 0.035                # 提升到 3.5cm，兼顾精度与性能
     stack_size_to_use: 40000000
     enable_interactive_mode: true
 
-    # 6. 优化器 (Ceres)
-    # 使用 Ceres 求解器进行图优化，这是目前最稳的选择
+    # 6. Ceres 优化器配置
     solver_plugin: solver_plugins::CeresSolver
     ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
     ceres_preconditioner: JACOBI
     ceres_trust_strategy: LEVENBERG_MARQUARDT
-    ceres_loss_function: None # 或者使用 HuberLoss 如果环境中有较多动态障碍物
+    ceres_loss_function: HuberLoss    # 使用 HuberLoss 能更好处理离群噪点

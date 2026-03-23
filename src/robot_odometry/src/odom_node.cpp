@@ -43,6 +43,7 @@ void OdometryNode::velocityCallback(const geometry_msgs::msg::TwistStamped::Shar
 
     odom.pose.pose.position.x = x_;
     odom.pose.pose.position.y = y_;
+    odom.pose.pose.position.z = 0.0;
 
     tf2::Quaternion q;
     q.setRPY(0, 0, th_);
@@ -51,6 +52,7 @@ void OdometryNode::velocityCallback(const geometry_msgs::msg::TwistStamped::Shar
     odom.pose.pose.orientation.z = q.z();
     odom.pose.pose.orientation.w = q.w();
 
+    std::fill(odom.pose.covariance.begin(), odom.pose.covariance.end(), 0.0);
     odom.pose.covariance[0] = 0.01;
     odom.pose.covariance[7] = 0.02;
     odom.pose.covariance[35] = 0.001;
