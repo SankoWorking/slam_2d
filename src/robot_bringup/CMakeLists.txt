@@ -9,10 +9,10 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
-install(DIRECTORY launch config
+install(DIRECTORY 
+  launch 
+  config
+  rviz
   DESTINATION share/${PROJECT_NAME}
 )
 
