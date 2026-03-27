@@ -46,8 +46,10 @@ private:
      * @return 转换后打加速度浮点值
      */
     float calAng(uint8_t high, uint8_t low);
-    
+    void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
     LibSerial::SerialPort serial_port_;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
+    std::mutex serial_mutex_;
     std::mutex buffer_mutex_;
     std::condition_variable buffer_cond_;
     std::thread read_thread_;

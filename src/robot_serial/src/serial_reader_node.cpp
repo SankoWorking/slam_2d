@@ -7,6 +7,8 @@ SerialReaderNode::SerialReaderNode () : Node("serial_reader_node"){
     node_clock_ = this->get_clock();
     vel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("velocity", 10);
     imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("imu/data_raw", 10);
+    cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+            "/cmd_vel", 10, std::bind(&SerialReaderNode::cmdVelCallback, this, std::placeholders::_1));
     try {
         serial_port_.Open("/dev/ttyACM0");
         serial_port_.SetBaudRate(LibSerial::BaudRate::BAUD_115200);
@@ -30,15 +32,61 @@ SerialReaderNode::~SerialReaderNode () {
     RCLCPP_INFO(this->get_logger(), "Node Closed!");
 }
 
+
+
+/**
+ * @brief cmd_vel订阅者的回调函数。
+ * @param TODO
+ */
+void SerialReaderNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    int16_t x_speed = static_cast<int16_t>(msg->linear.x * 1000.0);
+        int16_t y_speed = static_cast<int16_t>(msg->linear.y * 1000.0);
+        int16_t z_speed = static_cast<int16_t>(msg->angular.z * 1000.0);
+
+        std::vector<uint8_t> frame;
+        frame[0] = 0x7B;
+        frame[1] = 0x00;
+        frame[2] = 0x00;
+
+        frame[3] = (x_speed >> 8) & 0xFF; 
+        frame[4] = x_speed & 0xFF;
+        
+        frame[5] = (y_speed >> 8) & 0xFF;
+        frame[6] = y_speed & 0xFF;
+        
+        frame[7] = (z_speed >> 8) & 0xFF;
+        frame[8] = z_speed & 0xFF;
+
+        uint8_t bcc_check = 0;
+        for (int i = 0; i < 9; i++) {
+            bcc_check ^= frame[i];
+        }
+        frame[9] = bcc_check;
+        
+        frame[10] = 0x7D;
+        {
+            std::lock_guard<std::mutex> serial_lock(serial_mutex_);
+            serial_port_.Write(frame); 
+        }
+        // RCLCPP_INFO(this->get_logger(), "Sent: %02X %02X %02X %02X...", data[0], data[3], data[4], data[10]);
+}
+
+
+
+/**
+ * @brief 串口读取线程回调函数
+ */
 void SerialReaderNode::readThread() {
     RCLCPP_INFO(this->get_logger(), "Read Thread Started");
     LibSerial::DataBuffer temp_buffer;
     temp_buffer.reserve(128);
     while (rclcpp::ok() && running_) {
         try {
-            temp_buffer.clear();
-            serial_port_.Read(temp_buffer, 24, 100);
-            
+            {
+                std::lock_guard<std::mutex> serial_lock(serial_mutex_);
+                temp_buffer.clear();
+                serial_port_.Read(temp_buffer, 24, 100);
+            }
             if (!temp_buffer.empty()) {
                 {
                     std::lock_guard<std::mutex> lock(buffer_mutex_);
@@ -54,6 +102,11 @@ void SerialReaderNode::readThread() {
     }
 }
 
+
+
+/**
+ * @brief 串口解析线程回调函数
+ */
 void SerialReaderNode::parseThread() {
     std::vector<uint8_t> work_buffer;
     work_buffer.reserve(1024);
