@@ -43,7 +43,7 @@ void SerialReaderNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr
         int16_t y_speed = static_cast<int16_t>(msg->linear.y * 1000.0);
         int16_t z_speed = static_cast<int16_t>(msg->angular.z * 1000.0);
 
-        std::vector<uint8_t> frame;
+        std::vector<uint8_t> frame(11);
         frame[0] = 0x7B;
         frame[1] = 0x00;
         frame[2] = 0x00;
@@ -68,7 +68,7 @@ void SerialReaderNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr
             std::lock_guard<std::mutex> serial_lock(serial_mutex_);
             serial_port_.Write(frame); 
         }
-        // RCLCPP_INFO(this->get_logger(), "Sent: %02X %02X %02X %02X...", data[0], data[3], data[4], data[10]);
+        RCLCPP_INFO(this->get_logger(), "Sent: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X...", frame[0], frame[1], frame[2], frame[3], frame[4], frame[5], frame[6], frame[7], frame[8], frame[9], frame[10]);
 }
 
 
@@ -85,7 +85,7 @@ void SerialReaderNode::readThread() {
             {
                 std::lock_guard<std::mutex> serial_lock(serial_mutex_);
                 temp_buffer.clear();
-                serial_port_.Read(temp_buffer, 24, 100);
+                serial_port_.Read(temp_buffer, 24, 10);
             }
             if (!temp_buffer.empty()) {
                 {

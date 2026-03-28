@@ -11,6 +11,8 @@ def generate_launch_description():
 
     params_file = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
     map_yaml_file = os.path.join(pkg_dir, 'maps', 'map.yaml')
+
+    print(f"Loading map from: {map_yaml_file}")
     
     return LaunchDescription([
         IncludeLaunchDescription(
