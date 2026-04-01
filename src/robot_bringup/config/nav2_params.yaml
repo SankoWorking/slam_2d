@@ -1,26 +1,17 @@
 amcl:
   ros__parameters:
     use_sim_time: False
-    # 用于中和里程计的误差
     alpha1: 0.2
     alpha2: 0.2
     alpha3: 0.2
     alpha4: 0.2
     alpha5: 0.2
-
-    # 定义机器人本体坐标系
     base_frame_id: "base_link"
-
-    # 是否开启射线跳过功能，开启后将开始识别并忽略打在动态障碍物上打激光束，提高机器人在复杂场景的定位精度
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
     beam_skip_threshold: 0.3
     do_beamskip: false
-
-    # 定义全局坐标系
     global_frame_id: "map"
-
-    # 配置计算激光测距概率的数学模型
     laser_model_type: "likelihood_field"
     lambda_short: 0.1
     laser_likelihood_max_dist: 2.0
@@ -31,44 +22,22 @@ amcl:
     z_max: 0.05
     z_rand: 0.5
     z_short: 0.05
-    
-    # 限制每次扫描中实际参与概率计算的激光束打最大数量
     max_beams: 60
-    
-    # 粒子滤波器允许存在的最大粒子数
     max_particles: 2000
-
-    # 粒子滤波器允许存在的最小粒子数
     min_particles: 500
-
-    # 定义里程计坐标系
     odom_frame_id: "odom"
-
-    # 控制机器人“绑架恢复机制的灵敏度
     recovery_alpha_fast: 0.0
     recovery_alpha_slow: 0.0
-
-    # 决定系统在运行时需要维持多少猜测的粒子
     pf_err: 0.05
     pf_z: 0.99
-
-    # 定义机器人的运动学模型
     robot_model_type: "nav2_amcl::OmniMotionModel"
-
-    # 决定粒子滤波器执行重采样的频率
     resample_interval: 1
     save_pose_rate: 0.5
-    update_min_a: 0.2
-    update_min_d: 0.25
-
-    # 是否由AMCL发布TF变换及TF变换的保质期
+    update_min_a: 0.1            # 【抗打滑漂移】降低旋转更新阈值，更频繁纠偏
+    update_min_d: 0.15           # 【抗打滑漂移】降低平移更新阈值
     tf_broadcast: true
     transform_tolerance: 0.6
-    
-    # 定义雷达话题
     scan_topic: scan
-
-    # 配置机器人初始位置
     set_initial_pose: true
     initial_pose:
       x: 10.1592 
@@ -82,14 +51,9 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_link
     odom_topic: /odom
-    # 行为树相关的参数
     bt_loop_duration: 10
     default_server_timeout: 20
     wait_for_service_timeout: 1000
-    # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
-    # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
-    # nav2_bt_navigator/navigate_through_poses_w_replanning_and_recovery.xml
-    # They can be set here or via a RewrittenYaml remap from a parent launch file to Nav2.
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
@@ -139,78 +103,112 @@ bt_navigator:
       - nav2_drive_on_heading_cancel_bt_node
       - nav2_is_battery_charging_condition_bt_node
 
-# 单点导航
 bt_navigator_navigate_through_poses_rclcpp_node:
   ros__parameters:
     use_sim_time: False
-# 多目标导航
 bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: False
 
 controller_server:
   ros__parameters:
-    use_sim_time: False
-    controller_frequency: 30.0
+    use_sim_time: True
+    controller_frequency: 10.0       # 【虚拟机减负】全局控制频率降为 10Hz，确保指令实时下达不卡顿
     min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.01
+    min_y_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["general_goal_checker"] # "precise_goal_checker"
+    goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
 
-    # Progress checker parameters
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.5
       movement_time_allowance: 10.0
-    # Goal checker parameters
-    #precise_goal_checker:
-    #  plugin: "nav2_controller::SimpleGoalChecker"
-    #  xy_goal_tolerance: 0.25
-    #  yaw_goal_tolerance: 0.25
-    #  stateful: True
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 0.2
     
     FollowPath:
-      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      use_sim_time: False # 实物测试请保持 False
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 40                 # 【虚拟机减负】降低预测步数，减少轨迹长度计算量
+      model_dt: 0.05
+      batch_size: 500                # 【虚拟机减负】暴砍 75% 采样批次，防止遇人时 CPU 卡死
+      iteration_count: 1
+      v_std: [0.15, 0.1, 0.3]        # 【防画龙】收缩 Y 轴侧方采样，遇人时倾向减速而非剧烈横移
+      v_mag_std: [0.1, 0.1, 0.1]
+      predict_cost: true
+      reset_period: 1.0
+      visualize: true
+
+      motion_model: "Omni"
       
-      # --- 速度与加速度 ---
-      desired_linear_vel: 0.5            # 巡航线速度 (m/s)
-      max_angular_vel: 1.8               # 最大角速度 (rad/s)
-      min_approach_linear_velocity: 0.1 # 靠近终点时的“爬行”速度
-      max_allowed_time_to_collision_up_to_lookahead_dist: 1.0 # 碰撞预警时间
-      
-      # --- 前瞻逻辑 (核心：关系到路径贴合度) ---
-      # 因为半径 0.25m，前瞻距离绝对不能小于 0.3m，否则前瞻点会落在车体中心附近导致剧烈震荡
-      lookahead_dist: 0.85                # 建议设为半径的 2-3 倍
-      min_lookahead_dist: 0.55            # 强制最小值，防止前瞻点离中心太近
-      max_lookahead_dist: 1.5            # 高速时的最大前瞻距离
-      lookahead_time: 1.8               # 根据当前速度预测 1.5 秒后的位置
-      use_velocity_scaled_lookahead_dist: True # 开启动态前瞻，速度快时看远点，走得更稳
-      
-      # --- 减速监管 (RPP 的灵魂，防止过弯甩尾) ---
-      use_regulated_linear_velocity_scaling: True 
-      # 关键：半径 0.25m，当转弯半径小于 0.6m 时就开始减速，保护车体不切角撞墙
-      regulated_linear_scaling_min_radius: 0.6    
-      regulated_linear_scaling_min_speed: 0.1     # 减速时的底限，防止完全停死
-      
-      # --- 路径偏差与旋转 ---
-      use_rotate_to_heading: True        # 如果航向偏离太大，先原地转正再出发
-      rotate_to_heading_min_angle: 0.5 # 角度误差 > 45度 时触发原地旋转
-      rotate_to_heading_angular_vel: 1.0 # 原地旋转的速度
-      max_angular_accel: 2.5            # 旋转加速度
-      use_cost_regulated_linear_velocity_scaling: False
-      inflation_cost_scaling_factor: 3.0
-      # --- 碰撞避障 ---
-      use_collision_detection: True      # 必须开启
-      allow_reversing: False             # 除非你有后视雷达，否则不建议开启
+      vx_max: 0.3
+      vx_min: -0.3
+      vy_max: 0.2                    # 【防画龙】最大侧移速度限制在 0.2，动作更温柔
+      vy_min: -0.2
+      wz_max: 1.2
+
+      critics: [
+        "ConstraintCritic", 
+        "CostCritic", 
+        "GoalCritic", 
+        "GoalAngleCritic", 
+        "PathAlignCritic", 
+        "PathFollowCritic", 
+        "PathAngleCritic", 
+        "PreferForwardCritic"
+      ]
+
+      ConstraintCritic:
+        enabled: true
+        cost_weight: 4.0
+        vx_max: 0.3
+        vx_min: -0.3
+        vy_max: 0.2                  # 同步限制侧移速度
+        vy_min: -0.2
+        wz_max: 1.2
+
+      CostCritic:
+        enabled: true
+        cost_weight: 4.0             
+        critical_cost: 180.0
+        consider_footprint: false    # 必须为 false，虚拟机无法承受完整轮廓的逐点碰撞检测
+        collision_cost: 1000000.0
+        near_goal_distance: 0.5
+
+      GoalCritic:
+        enabled: true
+        goal_cost_weight: 5.0
+        threshold_to_consider: 1.0
+
+      GoalAngleCritic:
+        enabled: true
+        model_type: "Omni"
+        cost_weight: 3.0
+        threshold_to_consider: 0.3   
+
+      PathAlignCritic:
+        enabled: true
+        cost_weight: 5.0             
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 15    
+
+      PathFollowCritic:
+        enabled: true
+        cost_weight: 6.0             
+        offset_from_path: 20
+
+      PathAngleCritic:
+        enabled: true
+        cost_weight: 3.5             
+
+      PreferForwardCritic:
+        enabled: true
+        cost_weight: 4.0             
 
 local_costmap:
   local_costmap:
@@ -222,15 +220,15 @@ local_costmap:
       use_sim_time: False
       transform_tolerance: 0.6
       rolling_window: true
-      width: 3
-      height: 3
+      width: 5
+      height: 5
       resolution: 0.05
       robot_radius: 0.21
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.05
+        cost_scaling_factor: 2.5     
+        inflation_radius: 1.0        
       obstacle_layer: 
         plugin: "nav2_costmap_2d::ObstacleLayer" 
         enabled: True
@@ -283,15 +281,13 @@ global_costmap:
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.05
+        cost_scaling_factor: 2.5     
+        inflation_radius: 1.0        
       always_send_full_costmap: True
 
 map_server:
   ros__parameters:
     use_sim_time: False
-    # Overridden in launch by the "map" launch configuration or provided default value.
-    # To use in yaml, remove the default "map" value in the tb3_simulation_launch.py file & provide full path to map below.
     yaml_filename: ""
 
 map_saver:
@@ -308,10 +304,15 @@ planner_server:
     use_sim_time: False
     planner_plugins: ["GridBased"]
     GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.5
-      use_astar: false
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      tolerance: 0.1                 
       allow_unknown: true
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0
+      cost_travel_multiplier: 1.5    
+      use_final_approach_orientation: false
+      smoother_max_iterations: 1000  
 
 smoother_server:
   ros__parameters:
@@ -322,6 +323,7 @@ smoother_server:
       tolerance: 1.0e-10
       max_its: 1000
       do_refinement: True
+      interpolation_points: 20       
 
 behavior_server:
   ros__parameters:
@@ -344,7 +346,7 @@ behavior_server:
     transform_tolerance: 0.6
     use_sim_time: False
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
+    max_rotational_vel: 1.2
     min_rotational_vel: 0.4
     rotational_acc_lim: 3.2
 
@@ -369,10 +371,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.26, 0.26, 1.0]
-    min_velocity: [-0.26, -0.26, -1.0]
+    max_velocity: [0.3, 0.2, 1.2]    # 同步底层平滑限速
+    min_velocity: [-0.3, -0.2, -1.2] 
     max_accel: [2.5, 2.5, 3.2]
-    max_decel: [-2.5, 0.0, -3.2]
+    max_decel: [-2.5, -2.5, -3.2]
     odom_topic: "odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
