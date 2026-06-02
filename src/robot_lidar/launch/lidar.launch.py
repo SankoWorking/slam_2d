@@ -9,13 +9,19 @@ from launch.substitutions import LaunchConfiguration
 def generate_launch_description():
     sllidar_dir = get_package_share_directory('sllidar_ros2')
 
-    use_sime_time = LaunchConfiguration('use_sim_time', default='false')
+    use_sim_time = LaunchConfiguration('use_sim_time', default='false')
+    serial_port = LaunchConfiguration('serial_port', default='/dev/sllidar')
 
-    use_sime_time_arg = DeclareLaunchArgument (
+    use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time',
         default_value='false',
     )
-    
+    serial_port_arg = DeclareLaunchArgument(
+        'serial_port',
+        default_value='/dev/sllidar',
+        description='Serial port for RPLidar (default: /dev/sllidar udev symlink)',
+    )
+
     remap_scan_topic = SetRemap(src='/scan', dst='/scan_raw')
 
     static_tf_node = Node(
@@ -28,13 +34,15 @@ def generate_launch_description():
     lidar_driver_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(sllidar_dir, 'launch', 'sllidar_c1_launch.py')),
         launch_arguments={
-            'serial_port': '/dev/ttyUSB0', 
+            'serial_port': serial_port,
             'frame_id': 'laser_frame',
-            'use_sim_time': use_sime_time
+            'use_sim_time': use_sim_time
         }.items()
     )
 
     return LaunchDescription([
+        use_sim_time_arg,
+        serial_port_arg,
         remap_scan_topic,
         static_tf_node,
         lidar_driver_launch

@@ -1,0 +1,19 @@
+# Robot USB-serial stable symlinks.
+# Install with:
+#   sudo cp 99-robot-usb.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+# Then unplug/replug the USB devices, and these stable symlinks appear:
+#   /dev/sllidar  → CP210x (lidar, Silicon Labs 10c4:ea60)
+#   /dev/chassis  → QinHeng CH9102 (MCU, 1a86:55d4)
+#
+# Once installed, update src/robot_lidar/launch/lidar.launch.py
+# serial_port to '/dev/sllidar' and src/robot_serial/src/serial_reader_node.cpp
+# Open() argument to '/dev/chassis' for permanent stability regardless of
+# which USB port they're plugged into.
+
+# Lidar (Silicon Labs CP210x) — uniquely identified by USB serial number
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="f0c896bfdb73ef1188e6ca8c8fcc3fa0", SYMLINK+="sllidar", MODE="0666"
+
+# Chassis MCU (QinHeng CH9102, CDC ACM mode)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="0002", SYMLINK+="chassis", MODE="0666"

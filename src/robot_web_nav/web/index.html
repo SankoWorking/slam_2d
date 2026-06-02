@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>机器人导航</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Left sidebar: control + localization + waypoints -->
+    <aside id="sidebar">
+      <div class="sidebar-section" id="connection-section">
+        <div class="connection-row">
+          <span id="connection-dot" class="dot disconnected"></span>
+          <span id="connection-text">未连接</span>
+          <span id="error-badge" class="badge badge-bad hidden" title="点击查看错误日志">0</span>
+          <span id="client-id-text" class="muted"></span>
+        </div>
+      </div>
+
+      <!-- Map selector + rename -->
+      <div class="sidebar-section">
+        <div class="section-header">
+          <h3>地图</h3>
+          <button id="btn-map-rename" class="btn-icon" title="重命名当前地图" aria-label="重命名地图">✎</button>
+        </div>
+        <select id="map-selector" aria-label="选择地图"></select>
+        <div id="map-display-name" class="muted small"></div>
+      </div>
+
+      <!-- Localization -->
+      <div class="sidebar-section">
+        <div class="section-header">
+          <h3>定位</h3>
+          <span id="loc-quality" class="badge badge-warn" role="status">未知</span>
+        </div>
+        <div class="loc-stats small">
+          <div>位置σ: <span id="loc-cov-xy">—</span> m</div>
+          <div>朝向σ: <span id="loc-cov-yaw">—</span> rad</div>
+        </div>
+        <button id="btn-auto-localize" class="btn btn-secondary btn-block">🔄 自动定位</button>
+        <button id="btn-set-pose" class="btn btn-secondary btn-block">📍 设置初始位姿</button>
+        <div id="loc-hint" class="muted small">触发后遥控机器人走 1~2 米并旋转,直到位置σ &lt; 0.05</div>
+      </div>
+
+      <!-- Manual control D-pad -->
+      <div class="sidebar-section">
+        <div class="section-header">
+          <h3>手动控制</h3>
+          <span id="ctrl-owner" class="muted small">空闲</span>
+        </div>
+        <div class="dpad">
+          <button class="dpad-btn dpad-up" data-key="up" aria-label="前进">▲</button>
+          <button class="dpad-btn dpad-left" data-key="left" aria-label="左转">◀</button>
+          <button class="dpad-btn dpad-stop" data-key="stop" aria-label="停止">■</button>
+          <button class="dpad-btn dpad-right" data-key="right" aria-label="右转">▶</button>
+          <button class="dpad-btn dpad-down" data-key="down" aria-label="后退">▼</button>
+        </div>
+        <div class="ctrl-speed">
+          <label class="small">线速度: <span id="lin-speed-val">0.20</span> m/s</label>
+          <input type="range" id="lin-speed" min="0.05" max="0.30" step="0.01" value="0.20" aria-label="线速度">
+          <label class="small">角速度: <span id="ang-speed-val">0.80</span> rad/s</label>
+          <input type="range" id="ang-speed" min="0.1" max="1.5" step="0.05" value="0.80" aria-label="角速度">
+        </div>
+        <button id="btn-claim" class="btn btn-secondary btn-block">申请控制权</button>
+      </div>
+
+      <!-- Waypoints -->
+      <div class="sidebar-section sidebar-flex">
+        <div class="section-header">
+          <h3>路径点</h3>
+          <span id="wp-count" class="muted small">0</span>
+        </div>
+        <div id="waypoint-list"></div>
+      </div>
+
+      <!-- Logs (collapsible) -->
+      <div class="sidebar-section">
+        <div class="section-header clickable" id="logs-header">
+          <h3>日志</h3>
+          <span id="logs-toggle" class="muted small">▶</span>
+        </div>
+        <div id="logs-panel" class="hidden">
+          <div id="log-list"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main: map canvas -->
+    <main id="map-container">
+      <!-- Loading indicator -->
+      <div id="map-loading" class="map-loading">
+        <div class="spinner"></div>
+        <span>等待地图加载...</span>
+      </div>
+
+      <canvas id="map-canvas"></canvas>
+
+      <!-- Reconnect banner -->
+      <div id="reconnect-banner" class="reconnect-banner hidden">连接断开,正在重连...</div>
+
+      <!-- Set-pose hint overlay -->
+      <div id="set-pose-hint" class="set-pose-hint hidden">
+        点击地图设定位置,拖拽设定朝向
+        <button id="btn-cancel-set-pose" class="btn btn-sm">取消</button>
+      </div>
+
+      <!-- Floating top status bar -->
+      <div id="nav-status" class="hidden">
+        <span id="nav-status-text"></span>
+        <button id="btn-cancel-nav" class="btn btn-danger btn-sm">取消导航</button>
+      </div>
+
+      <!-- Floating top-right: robot pose readout -->
+      <div id="pose-readout">
+        <div class="pose-row">x: <span id="pose-x">—</span></div>
+        <div class="pose-row">y: <span id="pose-y">—</span></div>
+        <div class="pose-row">θ: <span id="pose-yaw">—</span>°</div>
+      </div>
+
+      <!-- Floating bottom-right: zoom controls -->
+      <div id="zoom-controls">
+        <button class="zoom-btn" data-zoom="in" aria-label="放大">+</button>
+        <button class="zoom-btn" data-zoom="out" aria-label="缩小">−</button>
+        <button class="zoom-btn" data-zoom="fit" aria-label="适配">⊡</button>
+      </div>
+
+      <!-- Add-waypoint overlay -->
+      <div id="map-overlay" class="hidden">
+        <div class="overlay-content">
+          <p class="overlay-title">添加路径点</p>
+          <p id="overlay-coords" class="coords-text"></p>
+          <input type="text" id="waypoint-name-input" placeholder="输入名称..." maxlength="20">
+          <div class="overlay-buttons">
+            <button id="btn-confirm-waypoint" class="btn btn-primary">确定</button>
+            <button id="btn-cancel-waypoint" class="btn">取消</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rename-map overlay -->
+      <div id="rename-overlay" class="hidden">
+        <div class="overlay-content">
+          <p class="overlay-title">重命名地图</p>
+          <p class="muted small" id="rename-current"></p>
+          <input type="text" id="rename-input" placeholder="新名称(文件名)..." maxlength="40">
+          <p class="muted small">提示:文件名不可含 / \\,且不能以 . 开头</p>
+          <div class="overlay-buttons">
+            <button id="btn-rename-confirm" class="btn btn-primary">保存</button>
+            <button id="btn-rename-cancel" class="btn">取消</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confirm dialog -->
+      <div id="confirm-dialog" class="overlay-dialog hidden">
+        <div class="overlay-content">
+          <p id="confirm-title" class="overlay-title"></p>
+          <p id="confirm-message" class="muted small" style="text-align:center;margin-bottom:12px;"></p>
+          <div class="overlay-buttons">
+            <button id="confirm-yes" class="btn btn-primary">确认</button>
+            <button id="confirm-no" class="btn">取消</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Alert dialog -->
+      <div id="alert-dialog" class="overlay-dialog hidden">
+        <div class="overlay-content">
+          <p id="alert-title" class="overlay-title"></p>
+          <p id="alert-message" class="muted small" style="text-align:center;margin-bottom:12px;"></p>
+          <div class="overlay-buttons">
+            <button id="alert-ok" class="btn btn-primary">确定</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/control.js"></script>
+  <script src="js/localize.js"></script>
+</body>
+</html>
