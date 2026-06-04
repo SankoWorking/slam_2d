@@ -4,9 +4,12 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
+#include <string>
 #include <vector>
 #include "rclcpp/rclcpp.hpp"
 #include <libserial/SerialPort.h>
+#include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 
@@ -48,6 +51,7 @@ private:
     float calAng(uint8_t high, uint8_t low);
     void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
     LibSerial::SerialPort serial_port_;
+    std::string serial_port_name_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     std::mutex serial_mutex_;
     std::mutex buffer_mutex_;

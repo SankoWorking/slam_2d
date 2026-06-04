@@ -1,8 +1,11 @@
 import asyncio
+import base64
+import io
 import json
 import math
 import os
 import threading
+import time
 import uuid
 
 import rclpy
@@ -10,7 +13,8 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from aiohttp import web, WSMsgType
 from geometry_msgs.msg import PoseWithCovarianceStamped
-from nav_msgs.msg import Path
+from nav_msgs.msg import OccupancyGrid, Path
+from PIL import Image
 
 from .log_emitter import LogEmitter
 from .map_service import MapService
@@ -19,9 +23,65 @@ from .nav_action_client import NavActionClient
 from .robot_tracker import RobotTracker
 from .manual_control import ManualControlManager
 from .localization_manager import LocalizationManager
+from .mapping_manager import MappingManager
+
+
+def _occupancy_grid_to_live_map_payload(msg: OccupancyGrid) -> dict:
+    width = int(msg.info.width)
+    height = int(msg.info.height)
+    if width <= 0 or height <= 0:
+        raise ValueError('empty occupancy grid')
+
+    data = msg.data
+    pixels = bytearray(width * height)
+    known = 0
+    free = 0
+    occupied = 0
+
+    for py in range(height):
+        src_base = (height - 1 - py) * width
+        dst_base = py * width
+        for x in range(width):
+            value = data[src_base + x]
+            if value < 0:
+                pixels[dst_base + x] = 205
+            elif value >= 65:
+                pixels[dst_base + x] = 0
+                known += 1
+                occupied += 1
+            else:
+                pixels[dst_base + x] = 254
+                known += 1
+                free += 1
+
+    img = Image.frombytes('L', (width, height), bytes(pixels))
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+    total = width * height
+
+    return {
+        'type': 'live_map_data',
+        'image': b64,
+        'width': width,
+        'height': height,
+        'resolution': float(msg.info.resolution),
+        'origin': [
+            float(msg.info.origin.position.x),
+            float(msg.info.origin.position.y),
+        ],
+        'map_name': '__live_mapping__',
+        'display_name': '实时建图预览',
+        'known_percent': round((known / total) * 100.0, 2) if total else 0.0,
+        'free_cells': free,
+        'occupied_cells': occupied,
+        'stamp': time.time(),
+    }
 
 
 class WebNavNode(Node):
+    LIVE_MAP_MIN_INTERVAL = 1.0
+
     def __init__(self):
         super().__init__('web_nav_server')
 
@@ -29,6 +89,7 @@ class WebNavNode(Node):
         maps_dir = self._resolve_maps_dir()
 
         self._web_dir = os.path.join(pkg_share, 'web')
+        self._maps_dir = maps_dir
         self._log = LogEmitter(self)
         self._map_service = MapService(maps_dir)
         self._waypoint_mgr = WaypointManager(
@@ -38,6 +99,7 @@ class WebNavNode(Node):
         self._robot_tracker = RobotTracker(self)
         self._control = ManualControlManager(self)
         self._localization = LocalizationManager(self)
+        self._mapping = MappingManager(self, maps_dir, self._log)
 
         # Publisher for initial pose setting
         self._initial_pose_pub = self.create_publisher(
@@ -49,6 +111,12 @@ class WebNavNode(Node):
             Path, '/plan', self._on_plan, 10
         )
         self._last_plan = None
+        self._live_map_sub = self.create_subscription(
+            OccupancyGrid, '/map', self._on_live_map, 10
+        )
+        self._last_live_map_payload = None
+        self._last_live_map_sent_at = 0.0
+        self._live_map_lock = threading.Lock()
 
         # Reasonable defaults matching nav2_params.yaml velocity caps
         self._control.set_limits(max_linear=0.3, max_angular=1.0)
@@ -80,6 +148,33 @@ class WebNavNode(Node):
                 )
             except Exception as e:
                 self.get_logger().warn(f'_on_plan broadcast error: {e}')
+
+    def _on_live_map(self, msg: OccupancyGrid):
+        """Receive /map while mapping and broadcast a throttled PNG preview."""
+        if _main_loop is None or not self._mapping.is_running():
+            return
+        now = time.monotonic()
+        with self._live_map_lock:
+            if (now - self._last_live_map_sent_at) < self.LIVE_MAP_MIN_INTERVAL:
+                return
+            self._last_live_map_sent_at = now
+
+        try:
+            payload = _occupancy_grid_to_live_map_payload(msg)
+        except Exception as e:
+            self.get_logger().warn(f'live map conversion error: {e}')
+            return
+
+        with self._live_map_lock:
+            self._last_live_map_payload = payload
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                _broadcast(self, payload),
+                _main_loop,
+            )
+        except Exception as e:
+            self.get_logger().warn(f'live map broadcast error: {e}')
 
     def _find_share_dir(self) -> str:
         try:
@@ -145,6 +240,12 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
         })
         await _send_control_status_to(ws, node)
         await _send_localization_status_to(ws, node)
+        await _send_mapping_status_to(ws, node)
+        if node._mapping.is_running():
+            with node._live_map_lock:
+                live_payload = node._last_live_map_payload
+            if live_payload:
+                await ws.send_json(live_payload)
         # Reconnect recovery: send active navigation state
         if node._active_nav_goal:
             await ws.send_json({
@@ -164,7 +265,11 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                await _handle_message(ws, node, msg.data)
+                try:
+                    await _handle_message(ws, node, msg.data)
+                except Exception as e:
+                    node._log.error('ws', f'Error handling client {client_id} message: {e}')
+                    await ws.send_json({'type': 'error', 'message': str(e)})
             elif msg.type == WSMsgType.ERROR:
                 node._log.error('ws', f'WS error: {ws.exception()}')
     finally:
@@ -178,6 +283,13 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str):
     try:
         msg = json.loads(raw)
@@ -187,15 +299,22 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
     msg_type = msg.get('type', '')
     client_id = node._ws_client_ids.get(ws)
 
-    # Ignore ping/pong (handled by transport)
-    if msg_type in ('ping', 'pong'):
+    if msg_type == 'ping':
+        await ws.send_json({'type': 'pong'})
+        return
+
+    if msg_type == 'pong':
         return
 
     if msg_type == 'load_map':
         map_name = msg.get('map_name', 'map')
+        if map_name not in node._map_service.list_maps():
+            await ws.send_json({'type': 'error', 'message': f'Map not found: {map_name}'})
+            return
         node._current_map = map_name
-        await _send_map_data(ws, node)
-        await _send_waypoints(ws, node)
+        await _send_map_data_all(node)
+        await _send_waypoints_all(node)
+        await _send_map_list_all(node)
 
     elif msg_type == 'list_maps':
         await _send_map_list(ws, node)
@@ -204,7 +323,8 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
         name = msg.get('name', '').strip()
         if not name:
             return
-        px, py = msg.get('pixel_x', 0), msg.get('pixel_y', 0)
+        px = _as_float(msg.get('pixel_x', 0))
+        py = _as_float(msg.get('pixel_y', 0))
         wx, wy = node._map_service.pixel_to_world(node._current_map, px, py)
         wp = node._waypoint_mgr.add_waypoint(name, wx, wy)
         node._log.info('waypoint', f'Added: {name} at ({wx:.2f}, {wy:.2f})')
@@ -214,7 +334,9 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
         name = msg.get('name', '').strip()
         if not name:
             return
-        x, y, yaw = msg.get('x', 0), msg.get('y', 0), msg.get('yaw', 0)
+        x = _as_float(msg.get('x', 0))
+        y = _as_float(msg.get('y', 0))
+        yaw = _as_float(msg.get('yaw', 0))
         wp = node._waypoint_mgr.add_waypoint(name, x, y, yaw)
         await _broadcast(node, {'type': 'waypoint_added', 'waypoint': wp})
 
@@ -230,8 +352,15 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
         name = msg.get('name', '')
         wp = node._waypoint_mgr.get_waypoint(name)
         if wp:
+            if not node._nav_client.send_goal(wp['x'], wp['y'], wp.get('yaw', 0.0)):
+                await ws.send_json({
+                    'type': 'error',
+                    'message': 'NavigateToPose action server not available',
+                })
+                return
             node._active_nav_goal = wp
-            node._nav_client.send_goal(wp['x'], wp['y'], wp.get('yaw', 0.0))
+            node._last_plan = None
+            await _broadcast(node, {'type': 'planned_path', 'path': []})
             await _broadcast(node, {
                 'type': 'nav_status', 'status': 'navigating', 'goal': wp
             })
@@ -239,19 +368,29 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
             await ws.send_json({'type': 'error', 'message': f'Waypoint not found: {name}'})
 
     elif msg_type == 'navigate_to_xy':
-        x, y = msg.get('x', 0), msg.get('y', 0)
-        yaw = msg.get('yaw', 0.0)
+        x = _as_float(msg.get('x', 0))
+        y = _as_float(msg.get('y', 0))
+        yaw = _as_float(msg.get('yaw', 0.0))
         goal = {'name': f'({x:.1f}, {y:.1f})', 'x': x, 'y': y, 'yaw': yaw}
+        if not node._nav_client.send_goal(x, y, yaw):
+            await ws.send_json({
+                'type': 'error',
+                'message': 'NavigateToPose action server not available',
+            })
+            return
         node._active_nav_goal = goal
-        node._nav_client.send_goal(x, y, yaw)
+        node._last_plan = None
+        await _broadcast(node, {'type': 'planned_path', 'path': []})
         await _broadcast(node, {
             'type': 'nav_status', 'status': 'navigating', 'goal': goal
         })
 
     elif msg_type == 'cancel_nav':
         node._active_nav_goal = None
+        node._last_plan = None
         node._nav_client.cancel_goal()
         await _broadcast(node, {'type': 'nav_status', 'status': 'canceled'})
+        await _broadcast(node, {'type': 'planned_path', 'path': []})
 
     elif msg_type == 'claim_control':
         if not client_id:
@@ -268,9 +407,9 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
     elif msg_type == 'set_velocity':
         if not client_id:
             return
-        lx = float(msg.get('linear_x', 0.0))
-        ly = float(msg.get('linear_y', 0.0))
-        az = float(msg.get('angular_z', 0.0))
+        lx = _as_float(msg.get('linear_x', 0.0))
+        ly = _as_float(msg.get('linear_y', 0.0))
+        az = _as_float(msg.get('angular_z', 0.0))
         accepted = node._control.set_velocity(client_id, lx, ly, az)
         if not accepted:
             await ws.send_json({
@@ -286,10 +425,57 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
             'message': '' if ok else 'global_localization service not available',
         })
 
+    elif msg_type == 'get_mapping_status':
+        await _send_mapping_status_to(ws, node)
+
+    elif msg_type == 'start_mapping':
+        backend = msg.get('backend', 'slam_toolbox')
+        try:
+            with node._live_map_lock:
+                node._last_live_map_payload = None
+                node._last_live_map_sent_at = 0.0
+            status = await asyncio.to_thread(node._mapping.start, backend)
+            await _broadcast(node, {'type': 'live_map_cleared'})
+            await _broadcast_mapping_status(node, status)
+        except Exception as e:
+            await ws.send_json({'type': 'error', 'message': str(e)})
+            await _send_mapping_status_to(ws, node)
+
+    elif msg_type == 'stop_mapping':
+        status = await asyncio.to_thread(node._mapping.stop)
+        with node._live_map_lock:
+            node._last_live_map_payload = None
+        await _broadcast_mapping_status(node, status)
+        await _broadcast(node, {'type': 'live_map_cleared'})
+
+    elif msg_type == 'save_mapping':
+        name = msg.get('name', '')
+        display_name = msg.get('display_name', '').strip()
+        overwrite = bool(msg.get('overwrite', False))
+        try:
+            saved = await asyncio.to_thread(
+                node._mapping.save_map,
+                name,
+                overwrite,
+            )
+            map_id = saved['id']
+            if display_name:
+                node._map_service.set_display_name(map_id, display_name)
+            node._current_map = map_id
+            node._map_service.invalidate(map_id)
+            node._map_service.load_map(map_id)
+            await _broadcast(node, {'type': 'map_saved', 'map': saved})
+            await _send_map_list_all(node)
+            await _send_map_data_all(node)
+            await _broadcast_mapping_status(node)
+        except Exception as e:
+            await ws.send_json({'type': 'error', 'message': str(e)})
+            await _send_mapping_status_to(ws, node)
+
     elif msg_type == 'set_initial_pose':
-        x = float(msg.get('x', 0.0))
-        y = float(msg.get('y', 0.0))
-        yaw = float(msg.get('yaw', 0.0))
+        x = _as_float(msg.get('x', 0.0))
+        y = _as_float(msg.get('y', 0.0))
+        yaw = _as_float(msg.get('yaw', 0.0))
         pose_msg = PoseWithCovarianceStamped()
         pose_msg.header.frame_id = 'map'
         pose_msg.header.stamp = node.get_clock().now().to_msg()
@@ -314,7 +500,7 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
         display = msg.get('display_name', '')
         try:
             node._map_service.set_display_name(map_id, display)
-            await _send_map_list(ws, node)
+            await _send_map_list_all(node)
         except Exception as e:
             await ws.send_json({'type': 'error', 'message': str(e)})
 
@@ -323,6 +509,8 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
         new = msg.get('new', '')
         try:
             new_id = node._map_service.rename_map(old, new)
+            if node._current_map == old:
+                node._current_map = new_id
             await _broadcast(node, {'type': 'map_renamed', 'old': old, 'new': new_id})
             await _send_map_list_all(node)
         except Exception as e:
@@ -383,6 +571,13 @@ async def _send_waypoints(ws: web.WebSocketResponse, node: WebNavNode):
     await ws.send_json({'type': 'waypoints', 'waypoints': wps})
 
 
+async def _send_waypoints_all(node: WebNavNode):
+    await _broadcast(node, {
+        'type': 'waypoints',
+        'waypoints': node._waypoint_mgr.list_waypoints(),
+    })
+
+
 async def _send_map_list(ws: web.WebSocketResponse, node: WebNavNode):
     await ws.send_json({
         'type': 'map_list',
@@ -400,12 +595,37 @@ async def _send_map_list_all(node: WebNavNode):
     await _broadcast_raw(node, msg)
 
 
+async def _send_map_data_all(node: WebNavNode):
+    try:
+        b64, info = node._map_service.get_map_png_base64(node._current_map)
+        await _broadcast(node, {
+            'type': 'map_data',
+            'image': b64,
+            'width': info.width,
+            'height': info.height,
+            'resolution': info.resolution,
+            'origin': [info.origin_x, info.origin_y],
+            'map_name': node._current_map,
+            'display_name': node._map_service.get_display_name(node._current_map),
+        })
+    except Exception as e:
+        node._log.error('map', f'Failed to load map: {e}')
+        await _broadcast(node, {
+            'type': 'error',
+            'message': f'Failed to load map: {str(e)}',
+        })
+
+
 async def _send_control_status_to(ws: web.WebSocketResponse, node: WebNavNode):
     await ws.send_json({'type': 'control_status', **node._control.get_status()})
 
 
 async def _send_localization_status_to(ws: web.WebSocketResponse, node: WebNavNode):
     await ws.send_json({'type': 'localization_status', **node._localization.get_status()})
+
+
+async def _send_mapping_status_to(ws: web.WebSocketResponse, node: WebNavNode):
+    await ws.send_json({'type': 'mapping_status', **node._mapping.get_status()})
 
 
 async def _broadcast_control_status(node: WebNavNode):
@@ -416,13 +636,19 @@ async def _broadcast_localization_status(node: WebNavNode, status: dict):
     await _broadcast(node, {'type': 'localization_status', **status})
 
 
+async def _broadcast_mapping_status(node: WebNavNode, status: dict = None):
+    if status is None:
+        status = node._mapping.get_status()
+    await _broadcast(node, {'type': 'mapping_status', **status})
+
+
 async def _broadcast(node: WebNavNode, data: dict):
     await _broadcast_raw(node, json.dumps(data))
 
 
 async def _broadcast_raw(node: WebNavNode, msg_str: str):
     dead = set()
-    for ws in node._ws_clients:
+    for ws in list(node._ws_clients):
         try:
             await ws.send_str(msg_str)
         except Exception:
@@ -447,7 +673,7 @@ def _broadcast_log_entry(node: WebNavNode, entry: dict):
 
 async def _broadcast_raw_to(node: WebNavNode, msg_str: str, targets: set):
     dead = set()
-    for ws in targets:
+    for ws in list(targets):
         try:
             await ws.send_str(msg_str)
         except Exception:
@@ -583,6 +809,7 @@ def main():
         pass
     finally:
         node._log.info('server', 'Shutting down')
+        node._mapping.shutdown()
         loop.close()
         executor.shutdown()
         rclpy.shutdown()

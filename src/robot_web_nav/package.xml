@@ -11,8 +11,16 @@
   <depend>nav2_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
+
+  <exec_depend>robot_bringup</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>python3-aiohttp</exec_depend>
+  <exec_depend>python3-pil</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

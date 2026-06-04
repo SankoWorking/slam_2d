@@ -150,14 +150,14 @@ function startSendLoop() {
   }, WATCHDOG_MS);
 }
 
-function stopSendLoop() {
+function stopSendLoop(sendZero = true) {
   if (ctrl.sendTimer) {
     clearInterval(ctrl.sendTimer);
     ctrl.sendTimer = null;
   }
   clearTimeout(ctrl.watchdogTimer);
   ctrl.linearX = 0; ctrl.linearY = 0; ctrl.angularZ = 0;
-  sendOnce();
+  if (sendZero) sendOnce();
 }
 
 function sendOnce() {
@@ -194,12 +194,19 @@ registerHandler('claim_control_result', (msg) => {
 registerHandler('control_status', (msg) => {
   const myId = state.clientId;
   const owner = msg.owner;
+  const wasOwned = ctrl.owned;
   if (owner && owner !== myId) {
     ctrl.owned = false;
   } else if (owner === myId) {
     ctrl.owned = true;
   } else if (!owner) {
     ctrl.owned = false;
+  }
+  if (wasOwned && !ctrl.owned) {
+    ctrl.pressed.clear();
+    ctrl.pendingKeys.clear();
+    document.querySelectorAll('.dpad-btn').forEach(b => b.classList.remove('pressed'));
+    stopSendLoop(false);
   }
   updateClaimUI();
   const ownerEl = document.getElementById('ctrl-owner');

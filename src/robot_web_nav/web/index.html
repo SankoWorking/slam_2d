@@ -19,8 +19,14 @@
         </div>
       </div>
 
+      <nav id="feature-tabs" class="feature-tabs" aria-label="功能页">
+        <button class="feature-tab active" data-page="nav" type="button">导航</button>
+        <button class="feature-tab" data-page="control" type="button">控制</button>
+        <button class="feature-tab" data-page="mapping" type="button">建图</button>
+      </nav>
+
       <!-- Map selector + rename -->
-      <div class="sidebar-section">
+      <div class="sidebar-section feature-panel active" data-feature-page="nav">
         <div class="section-header">
           <h3>地图</h3>
           <button id="btn-map-rename" class="btn-icon" title="重命名当前地图" aria-label="重命名地图">✎</button>
@@ -29,8 +35,39 @@
         <div id="map-display-name" class="muted small"></div>
       </div>
 
+      <!-- Mapping -->
+      <div class="sidebar-section mapping-section feature-panel" data-feature-page="mapping">
+        <div class="section-header">
+          <h3>建图</h3>
+          <span id="mapping-state" class="badge badge-bad" role="status">未运行</span>
+        </div>
+        <select id="mapping-backend" aria-label="建图后端">
+          <option value="slam_toolbox">SLAM Toolbox</option>
+          <option value="cartographer">Cartographer</option>
+        </select>
+        <div class="mapping-buttons">
+          <button id="btn-start-mapping" class="btn btn-primary">开始建图</button>
+          <button id="btn-stop-mapping" class="btn btn-danger" disabled>停止</button>
+        </div>
+        <div class="mapping-save-grid">
+          <input type="text" id="mapping-name" placeholder="地图文件名" maxlength="40" autocomplete="off" pattern="[A-Za-z0-9_.-]+">
+          <input type="text" id="mapping-display-input" placeholder="显示名称(可选)" maxlength="40" autocomplete="off">
+        </div>
+        <div class="mapping-live-stats small">
+          <div>实时预览: <span id="mapping-live-state">等待 /map</span></div>
+          <div>已探明: <span id="mapping-known-percent">--</span></div>
+          <div>障碍栅格: <span id="mapping-occupied-cells">--</span></div>
+        </div>
+        <label class="check-row small">
+          <input type="checkbox" id="mapping-overwrite">
+          <span>覆盖同名地图</span>
+        </label>
+        <button id="btn-save-mapping" class="btn btn-secondary btn-block">保存当前地图</button>
+        <div id="mapping-status-text" class="muted small">等待建图任务</div>
+      </div>
+
       <!-- Localization -->
-      <div class="sidebar-section">
+      <div class="sidebar-section feature-panel active" data-feature-page="nav">
         <div class="section-header">
           <h3>定位</h3>
           <span id="loc-quality" class="badge badge-warn" role="status">未知</span>
@@ -45,7 +82,7 @@
       </div>
 
       <!-- Manual control D-pad -->
-      <div class="sidebar-section">
+      <div class="sidebar-section feature-panel" data-feature-page="control">
         <div class="section-header">
           <h3>手动控制</h3>
           <span id="ctrl-owner" class="muted small">空闲</span>
@@ -67,7 +104,7 @@
       </div>
 
       <!-- Waypoints -->
-      <div class="sidebar-section sidebar-flex">
+      <div class="sidebar-section sidebar-flex feature-panel active" data-feature-page="nav">
         <div class="section-header">
           <h3>路径点</h3>
           <span id="wp-count" class="muted small">0</span>
@@ -76,7 +113,7 @@
       </div>
 
       <!-- Logs (collapsible) -->
-      <div class="sidebar-section">
+      <div class="sidebar-section feature-panel active" data-feature-page="nav">
         <div class="section-header clickable" id="logs-header">
           <h3>日志</h3>
           <span id="logs-toggle" class="muted small">▶</span>
@@ -182,5 +219,6 @@
   <script src="js/map.js"></script>
   <script src="js/control.js"></script>
   <script src="js/localize.js"></script>
+  <script src="js/mapping.js"></script>
 </body>
 </html>

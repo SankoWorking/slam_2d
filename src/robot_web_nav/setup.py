@@ -25,7 +25,7 @@ setup(
         (os.path.join('share', package_name, 'launch'),
             [f for f in glob.glob('launch/*.py') if os.path.isfile(f)]),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'aiohttp', 'Pillow', 'PyYAML'],
     zip_safe=True,
     maintainer='sanko',
     maintainer_email='sanko_working@163.com',

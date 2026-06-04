@@ -3,3 +3,5 @@ install/
 log/
 third_party/
 .vscode/
+__pycache__/
+*.pyc

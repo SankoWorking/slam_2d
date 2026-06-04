@@ -81,6 +81,9 @@ function resizeCanvas() {
 // ===== Handler registration =====
 
 registerHandler('map_data', (msg) => {
+  state.liveMapActive = false;
+  state.liveMapStats = null;
+  if (typeof updateLiveMapStats === 'function') updateLiveMapStats();
   state.currentMap = msg.map_name;
   hideMapLoading();
   state.mapMeta = {
@@ -103,6 +106,50 @@ registerHandler('map_data', (msg) => {
     }
   };
   img.src = 'data:image/png;base64,' + msg.image;
+});
+
+registerHandler('live_map_data', (msg) => {
+  hideMapLoading();
+  const prevMeta = state.mapMeta;
+  const shouldFit = !state.liveMapActive
+    || !prevMeta
+    || prevMeta.width !== msg.width
+    || prevMeta.height !== msg.height
+    || prevMeta.resolution !== msg.resolution
+    || prevMeta.origin[0] !== msg.origin[0]
+    || prevMeta.origin[1] !== msg.origin[1];
+
+  state.liveMapActive = true;
+  state.liveMapStats = {
+    knownPercent: msg.known_percent,
+    freeCells: msg.free_cells,
+    occupiedCells: msg.occupied_cells,
+    stamp: msg.stamp,
+  };
+  state.mapMeta = {
+    width: msg.width,
+    height: msg.height,
+    resolution: msg.resolution,
+    origin: msg.origin,
+    mapName: msg.map_name,
+    displayName: msg.display_name || 'Live mapping',
+  };
+
+  const img = new Image();
+  img.onload = () => {
+    mapImg = img;
+    processedMapCanvas = preprocessMap(img, msg.width, msg.height);
+    if (shouldFit) fitMap();
+    else renderMap();
+    if (typeof updateLiveMapStats === 'function') updateLiveMapStats();
+  };
+  img.src = 'data:image/png;base64,' + msg.image;
+});
+
+registerHandler('live_map_cleared', () => {
+  state.liveMapActive = false;
+  state.liveMapStats = null;
+  if (typeof updateLiveMapStats === 'function') updateLiveMapStats();
 });
 
 registerHandler('planned_path', (msg) => {
@@ -132,11 +179,11 @@ function preprocessMap(img, w, h) {
     const v = px[i];
     let r, g, b, a;
     if (v < 50) {
-      r = 10; g = 13; b = 18; a = 255;
+      r = 11; g = 13; b = 11; a = 255;
     } else if (v > 220) {
-      r = 45; g = 58; b = 79; a = 255;
+      r = 49; g = 64; b = 53; a = 255;
     } else {
-      r = 26; g = 31; b = 41; a = 180;
+      r = 23; g = 28; b = 23; a = 180;
     }
     px[i] = r; px[i+1] = g; px[i+2] = b; px[i+3] = a;
   }
@@ -170,7 +217,7 @@ function renderMap() {
   const cw = mapCanvas.clientWidth;
   const ch = mapCanvas.clientHeight;
   mapCtx.clearRect(0, 0, cw, ch);
-  mapCtx.fillStyle = '#1a1f29';
+  mapCtx.fillStyle = '#131713';
   mapCtx.fillRect(0, 0, cw, ch);
 
   if (!state.mapMeta || !processedMapCanvas) return;
@@ -214,7 +261,7 @@ function drawGrid() {
 function drawPlannedPath() {
   if (!state.plannedPath || state.plannedPath.length < 2 || !state.mapMeta) return;
   mapCtx.save();
-  mapCtx.strokeStyle = '#00e5ff';
+  mapCtx.strokeStyle = '#6ee7c8';
   mapCtx.lineWidth = 2;
   mapCtx.setLineDash([6, 4]);
   mapCtx.globalAlpha = 0.7;
@@ -236,11 +283,11 @@ function drawWaypoints() {
     mapCtx.save();
     mapCtx.beginPath();
     mapCtx.arc(sx, sy, 14, 0, Math.PI * 2);
-    mapCtx.fillStyle = 'rgba(74,158,255,0.15)';
+    mapCtx.fillStyle = 'rgba(52,179,143,0.16)';
     mapCtx.fill();
     mapCtx.beginPath();
     mapCtx.arc(sx, sy, 8, 0, Math.PI * 2);
-    mapCtx.fillStyle = '#4a9eff';
+    mapCtx.fillStyle = '#34b38f';
     mapCtx.fill();
     mapCtx.strokeStyle = '#fff';
     mapCtx.lineWidth = 2;
@@ -375,6 +422,14 @@ function pixelToScreen(px, py) {
   return [px * viewScale + viewOffset.x, py * viewScale + viewOffset.y];
 }
 
+function isPixelInsideMap(px, py) {
+  return state.mapMeta
+    && px >= 0
+    && py >= 0
+    && px < state.mapMeta.width
+    && py < state.mapMeta.height;
+}
+
 // ===== Pointer / touch =====
 function getCanvasPos(e) {
   const rect = mapCanvas.getBoundingClientRect();
@@ -413,6 +468,13 @@ function onPointerUp(e) {
   // Initial pose: release to confirm
   if (setPoseMode && setPoseStart) {
     const pos = getCanvasPos(e);
+    const [px, py] = screenToPixel(setPoseStart.sx, setPoseStart.sy);
+    if (!isPixelInsideMap(px, py)) {
+      setPoseStart = null;
+      setPoseCurrent = null;
+      renderMap();
+      return;
+    }
     const [wx, wy] = screenToWorld(setPoseStart.sx, setPoseStart.sy);
     let yaw = 0;
     if (setPoseCurrent) {
@@ -444,9 +506,11 @@ function onWheel(e) {
 
 function onMapDblClick(e) {
   if (setPoseMode) return; // Don't add waypoints in set-pose mode
+  if (state.liveMapActive) return; // Live SLAM preview is not a persisted map yet
   if (!state.mapMeta) return;
   const pos = getCanvasPos(e);
   const [px, py] = screenToPixel(pos.x, pos.y);
+  if (!isPixelInsideMap(px, py)) return;
   const [wx, wy] = screenToWorld(pos.x, pos.y);
   state.pendingClick = { px, py, wx, wy };
   document.getElementById('overlay-coords').textContent =

@@ -108,18 +108,22 @@ class ManualControlManager:
                 self._stop_sent = False
                 self._emit_status_locked()
 
+            if (
+                self._owner is None
+                and self._linear_x == 0.0
+                and self._linear_y == 0.0
+                and self._angular_z == 0.0
+            ):
+                if self._stop_sent:
+                    return
+                self._stop_sent = True
+
             # Publish current velocity (or zero if no owner)
             msg = Twist()
             msg.linear.x = self._linear_x
             msg.linear.y = self._linear_y
             msg.angular.z = self._angular_z
             self._pub.publish(msg)
-
-            # Stop sending zero repeatedly once it's been sent once
-            if self._owner is None and self._linear_x == 0.0 and self._linear_y == 0.0 and self._angular_z == 0.0:
-                if self._stop_sent:
-                    return
-                self._stop_sent = True
 
     def _emit_status_locked(self):
         # Caller already holds lock

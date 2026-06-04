@@ -5,16 +5,21 @@ SerialReaderNode::SerialReaderNode () : Node("serial_reader_node"){
     data_ready_ = false;
     shared_buffer_.reserve(1024);
     node_clock_ = this->get_clock();
+    serial_port_name_ = this->declare_parameter<std::string>("serial_port", "/dev/chassis");
     vel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("velocity", 10);
     imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("imu/data_raw", 10);
     cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", 10, std::bind(&SerialReaderNode::cmdVelCallback, this, std::placeholders::_1));
     try {
-        serial_port_.Open("/dev/ttyACM0");
+        serial_port_.Open(serial_port_name_);
         serial_port_.SetBaudRate(LibSerial::BaudRate::BAUD_115200);
-        RCLCPP_INFO(this->get_logger(), "Serial Started:/dev/ttyACM0");
+        RCLCPP_INFO(this->get_logger(), "Serial started: %s", serial_port_name_.c_str());
     } catch (const std::exception &e) {
-        RCLCPP_ERROR(this->get_logger(), "Can't open serial. %s", e.what());
+        RCLCPP_ERROR(
+            this->get_logger(),
+            "Can't open serial port %s: %s",
+            serial_port_name_.c_str(),
+            e.what());
         running_ = false;
     }
     if (running_){
@@ -40,35 +45,41 @@ SerialReaderNode::~SerialReaderNode () {
  */
 void SerialReaderNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
     int16_t x_speed = static_cast<int16_t>(msg->linear.x * 1000.0);
-        int16_t y_speed = static_cast<int16_t>(msg->linear.y * 1000.0);
-        int16_t z_speed = static_cast<int16_t>(msg->angular.z * 1000.0);
+    int16_t y_speed = static_cast<int16_t>(msg->linear.y * 1000.0);
+    int16_t z_speed = static_cast<int16_t>(msg->angular.z * 1000.0);
 
-        std::vector<uint8_t> frame(11);
-        frame[0] = 0x7B;
-        frame[1] = 0x00;
-        frame[2] = 0x00;
+    std::vector<uint8_t> frame(11);
+    frame[0] = 0x7B;
+    frame[1] = 0x00;
+    frame[2] = 0x00;
 
-        frame[3] = (x_speed >> 8) & 0xFF; 
-        frame[4] = x_speed & 0xFF;
-        
-        frame[5] = (y_speed >> 8) & 0xFF;
-        frame[6] = y_speed & 0xFF;
-        
-        frame[7] = (z_speed >> 8) & 0xFF;
-        frame[8] = z_speed & 0xFF;
+    frame[3] = (x_speed >> 8) & 0xFF;
+    frame[4] = x_speed & 0xFF;
 
-        uint8_t bcc_check = 0;
-        for (int i = 0; i < 9; i++) {
-            bcc_check ^= frame[i];
+    frame[5] = (y_speed >> 8) & 0xFF;
+    frame[6] = y_speed & 0xFF;
+
+    frame[7] = (z_speed >> 8) & 0xFF;
+    frame[8] = z_speed & 0xFF;
+
+    uint8_t bcc_check = 0;
+    for (int i = 0; i < 9; i++) {
+        bcc_check ^= frame[i];
+    }
+    frame[9] = bcc_check;
+
+    frame[10] = 0x7D;
+    try {
+        std::lock_guard<std::mutex> serial_lock(serial_mutex_);
+        if (!serial_port_.IsOpen()) {
+            return;
         }
-        frame[9] = bcc_check;
-        
-        frame[10] = 0x7D;
-        {
-            std::lock_guard<std::mutex> serial_lock(serial_mutex_);
-            serial_port_.Write(frame); 
-        }
-        RCLCPP_INFO(this->get_logger(), "Sent: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X...", frame[0], frame[1], frame[2], frame[3], frame[4], frame[5], frame[6], frame[7], frame[8], frame[9], frame[10]);
+        serial_port_.Write(frame);
+    } catch (const std::exception &e) {
+        RCLCPP_WARN(this->get_logger(), "Failed to write cmd_vel to serial: %s", e.what());
+        return;
+    }
+    RCLCPP_DEBUG(this->get_logger(), "Sent cmd_vel frame to chassis");
 }
 
 

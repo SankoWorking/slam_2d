@@ -10,9 +10,9 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-
-#libserial的存储路经有特殊性，所以使用此方法导入包
 find_package(PkgConfig REQUIRED)
+
+# libserial is discovered through pkg-config.
 pkg_check_modules(LIBSERIAL REQUIRED libserial)
 
 add_executable(serial_reader_node src/serial_reader_node.cpp)

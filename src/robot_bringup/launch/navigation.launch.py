@@ -12,7 +12,7 @@ def launch_setup(context, *args, **kwargs):
     pkg_dir = get_package_share_directory('robot_bringup')
 
     params_file = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
-    map_name = context.launch_configurations.get('map', 'map')
+    map_name = LaunchConfiguration('map').perform(context)
     map_yaml_file = os.path.join(pkg_dir, 'maps', f'{map_name}.yaml')
 
     print(f"Loading map from: {map_yaml_file}")

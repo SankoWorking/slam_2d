@@ -61,6 +61,9 @@ class MapService:
             return entry.get('display_name') or map_name
 
     def set_display_name(self, map_name: str, display_name: str):
+        map_name = self._sanitize(map_name)
+        if not os.path.exists(os.path.join(self._maps_dir, f'{map_name}.yaml')):
+            raise FileNotFoundError(f'map not found: {map_name}')
         with self._meta_lock:
             if display_name and display_name != map_name:
                 self._meta.setdefault(map_name, {})['display_name'] = display_name
@@ -85,19 +88,29 @@ class MapService:
             for name in self.list_maps()
         ]
 
+    def invalidate(self, map_name: str = None):
+        if map_name is None:
+            self._loaded_maps.clear()
+        else:
+            self._loaded_maps.pop(map_name, None)
+
     # ----- load -----
     def load_map(self, map_name: str) -> MapInfo:
+        map_name = self._sanitize(map_name)
         if map_name in self._loaded_maps:
             return self._loaded_maps[map_name]
 
         yaml_path = os.path.join(self._maps_dir, f'{map_name}.yaml')
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path, 'r', encoding='utf-8') as f:
             meta = yaml.safe_load(f)
 
         image_rel = meta['image'].strip()
-        image_path = os.path.join(self._maps_dir, image_rel)
-        img = Image.open(image_path)
-        width, height = img.size
+        if os.path.isabs(image_rel):
+            image_path = image_rel
+        else:
+            image_path = os.path.join(self._maps_dir, image_rel)
+        with Image.open(image_path) as img:
+            width, height = img.size
 
         origin = meta['origin']
         info = MapInfo(
@@ -113,9 +126,9 @@ class MapService:
 
     def get_map_png_base64(self, map_name: str) -> tuple[str, MapInfo]:
         info = self.load_map(map_name)
-        img = Image.open(info.image_path)
         buf = io.BytesIO()
-        img.save(buf, format='PNG')
+        with Image.open(info.image_path) as img:
+            img.save(buf, format='PNG')
         b64 = base64.b64encode(buf.getvalue()).decode('ascii')
         return b64, info
 
@@ -143,12 +156,12 @@ class MapService:
 
     def _read_yaml_image_field(self, map_name: str) -> str:
         yaml_path = os.path.join(self._maps_dir, f'{map_name}.yaml')
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)['image'].strip()
 
     def _write_yaml(self, map_name: str, data: dict):
         yaml_path = os.path.join(self._maps_dir, f'{map_name}.yaml')
-        with open(yaml_path, 'w') as f:
+        with open(yaml_path, 'w', encoding='utf-8') as f:
             yaml.safe_dump(data, f, sort_keys=False)
 
     def rename_map(self, old: str, new: str) -> str:
@@ -176,7 +189,7 @@ class MapService:
         # Move yaml, then patch its image field
         old_yaml = os.path.join(self._maps_dir, f'{old}.yaml')
         new_yaml = os.path.join(self._maps_dir, f'{new}.yaml')
-        with open(old_yaml, 'r') as f:
+        with open(old_yaml, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f)
         data['image'] = new_image_rel
         self._write_yaml(new, data)
@@ -211,7 +224,7 @@ class MapService:
         new_image_abs = os.path.join(self._maps_dir, new_image_rel)
 
         shutil.copy2(src_image_abs, new_image_abs)
-        with open(os.path.join(self._maps_dir, f'{src}.yaml'), 'r') as f:
+        with open(os.path.join(self._maps_dir, f'{src}.yaml'), 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f)
         data['image'] = new_image_rel
         self._write_yaml(new_name, data)

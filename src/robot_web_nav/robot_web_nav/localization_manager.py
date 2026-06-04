@@ -32,7 +32,7 @@ class LocalizationManager:
 
     def trigger_global(self) -> bool:
         """Call /reinitialize_global_localization. Returns True if request was sent."""
-        if not self._cli.service_is_ready():
+        if not self._cli.wait_for_service(timeout_sec=1.0):
             self._node.get_logger().warn('reinitialize_global_localization service not available')
             return False
         with self._lock:

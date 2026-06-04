@@ -4,8 +4,11 @@ const state = {
   ws: null,
   connected: false,
   clientId: null,
+  activePage: 'nav',
   currentMap: 'map',
   mapMeta: null,
+  liveMapActive: false,
+  liveMapStats: null,
   waypoints: [],
   robotPose: null,
   pendingClick: null,
@@ -27,6 +30,30 @@ function handleMessage(msg) {
   } else if (msg.type && msg.type !== 'ping' && msg.type !== 'pong') {
     console.warn('[ws] unhandled message type:', msg.type);
   }
+}
+
+// ===== Feature pages =====
+
+function setFeaturePage(page) {
+  state.activePage = page;
+  document.querySelectorAll('.feature-tab').forEach(btn => {
+    const active = btn.getAttribute('data-page') === page;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  document.querySelectorAll('.feature-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.getAttribute('data-feature-page') === page);
+  });
+  if (typeof renderMap === 'function') renderMap();
+}
+
+function initFeaturePages() {
+  document.querySelectorAll('.feature-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setFeaturePage(btn.getAttribute('data-page'));
+    });
+  });
+  setFeaturePage(state.activePage);
 }
 
 // ===== WebSocket =====
@@ -105,7 +132,7 @@ registerHandler('pong', () => { clearTimeout(_pongTimeout); });
 registerHandler('hello', (msg) => {
   state.clientId = msg.client_id;
   const idEl = document.getElementById('client-id-text');
-  if (idEl) idEl.textContent = `#${state.client_id}`;
+  if (idEl) idEl.textContent = `#${state.clientId}`;
 });
 
 registerHandler('map_list', (msg) => {
@@ -115,6 +142,7 @@ registerHandler('map_list', (msg) => {
 registerHandler('waypoints', (msg) => {
   state.waypoints = msg.waypoints;
   renderWaypointList();
+  if (typeof renderMap === 'function') renderMap();
 });
 
 registerHandler('waypoint_added', (msg) => {
@@ -122,11 +150,13 @@ registerHandler('waypoint_added', (msg) => {
   if (!exists) state.waypoints.push(msg.waypoint);
   else Object.assign(exists, msg.waypoint);
   renderWaypointList();
+  if (typeof renderMap === 'function') renderMap();
 });
 
 registerHandler('waypoint_deleted', (msg) => {
   state.waypoints = state.waypoints.filter(w => w.name !== msg.name);
   renderWaypointList();
+  if (typeof renderMap === 'function') renderMap();
 });
 
 registerHandler('robot_pose', (msg) => {
@@ -146,7 +176,9 @@ registerHandler('nav_status', (msg) => {
 
 registerHandler('nav_result', (msg) => {
   state.navStatus = null;
+  state.plannedPath = null;
   updateNavStatus(null);
+  if (typeof renderMap === 'function') renderMap();
 });
 
 registerHandler('nav_feedback', (msg) => {
@@ -227,6 +259,7 @@ function updatePoseReadout(pose) {
 // ===== Map selector =====
 
 function onMapList(msg) {
+  if (msg.current) state.currentMap = msg.current;
   const sel = document.getElementById('map-selector');
   sel.innerHTML = '';
   msg.maps.forEach(m => {
@@ -459,6 +492,7 @@ function renderLogPanel() {
 // ===== Init =====
 
 window.addEventListener('load', () => {
+  initFeaturePages();
   showMapLoading();
   connectWebSocket();
 
@@ -472,6 +506,7 @@ window.addEventListener('load', () => {
 
   // Error badge click opens logs
   document.getElementById('error-badge').addEventListener('click', () => {
+    setFeaturePage('nav');
     const panel = document.getElementById('logs-panel');
     const toggle = document.getElementById('logs-toggle');
     panel.classList.remove('hidden');

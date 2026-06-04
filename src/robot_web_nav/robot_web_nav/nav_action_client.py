@@ -17,6 +17,8 @@ class NavActionClient:
         self._node = node
         self._action_client = ActionClient(node, NavigateToPose, '/navigate_to_pose')
         self._goal_handle = None
+        self._pending_goal_future = None
+        self._cancel_requested = False
         self._result_callback = None
         self._feedback_callback = None
 
@@ -43,27 +45,52 @@ class NavActionClient:
         )
 
         self._node.get_logger().info(f'Sending nav goal: x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}')
-        send_goal_future = self._action_client.send_goal_async(
+        self._cancel_requested = False
+        self._pending_goal_future = self._action_client.send_goal_async(
             goal_msg,
             feedback_callback=self._internal_feedback,
         )
-        send_goal_future.add_done_callback(self._goal_response_callback)
+        self._pending_goal_future.add_done_callback(self._goal_response_callback)
         return True
 
     def _goal_response_callback(self, future):
-        goal_handle = future.result()
+        self._pending_goal_future = None
+        try:
+            goal_handle = future.result()
+        except Exception as e:
+            self._node.get_logger().error(f'Goal send failed: {e}')
+            self._cancel_requested = False
+            if self._result_callback:
+                self._result_callback('failed')
+            return
+
         if not goal_handle.accepted:
             self._node.get_logger().warn('Goal rejected')
+            self._cancel_requested = False
             if self._result_callback:
                 self._result_callback('rejected')
             return
+
         self._goal_handle = goal_handle
         self._node.get_logger().info('Goal accepted')
+        if self._cancel_requested:
+            self._node.get_logger().info('Canceling goal accepted after cancel request')
+            goal_handle.cancel_goal_async()
+            self._cancel_requested = False
+
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._result_done_callback)
 
     def _result_done_callback(self, future):
-        result = future.result()
+        try:
+            result = future.result()
+        except Exception as e:
+            self._node.get_logger().error(f'Navigation result failed: {e}')
+            self._goal_handle = None
+            if self._result_callback:
+                self._result_callback('failed')
+            return
+
         status = 'unknown'
         if result.status == 4:  # STATUS_SUCCEEDED
             status = 'succeeded'
@@ -86,3 +113,6 @@ class NavActionClient:
             self._node.get_logger().info('Canceling navigation goal')
             self._goal_handle.cancel_goal_async()
             self._goal_handle = None
+        elif self._pending_goal_future is not None:
+            self._node.get_logger().info('Cancel requested before goal response')
+            self._cancel_requested = True

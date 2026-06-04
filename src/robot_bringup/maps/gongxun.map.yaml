@@ -1,4 +1,4 @@
-image: map.pgm 
+image: gongxun.map.pgm
 mode: trinary
 resolution: 0.05
 origin: [-10.1, -32, 0]
