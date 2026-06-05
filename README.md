@@ -4,6 +4,33 @@
 
 Web 控制台现在拆分为三个功能页：导航、控制、建图。建图页支持从网页启动 SLAM Toolbox 或 Cartographer，实时查看 `/map` 中已经探明的区域，并保存地图文件。
 
+## 快速启动
+
+```bash
+# 1. 构建
+colcon build --symlink-install
+source install/setup.bash
+
+# 2. 一键启动（硬件 + 导航 + Web 控制台）
+ros2 launch robot_bringup full_system.launch.py
+
+# 3. 打开浏览器访问
+# http://<Jetson-IP>:9090
+```
+
+指定地图 / RViz / 端口：
+
+```bash
+ros2 launch robot_bringup full_system.launch.py map:=gongxun.map rviz:=true web_port:=8080
+```
+
+建图模式（不启动 Nav2/AMCL，避免 TF 冲突）：
+
+```bash
+ros2 launch robot_bringup full_system.launch.py navigation:=false
+# 然后在 Web 控制台的"建图"页操作
+```
+
 ## 功能特性
 
 - Web 三页式界面：导航、控制、建图，适配手机端触屏操作

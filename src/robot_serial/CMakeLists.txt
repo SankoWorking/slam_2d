@@ -10,6 +10,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 # libserial is discovered through pkg-config.
@@ -29,6 +30,7 @@ ament_target_dependencies(serial_reader_node
   "rclcpp"
   "geometry_msgs"
   "sensor_msgs"
+  "std_msgs"
 )
 
 install(TARGETS

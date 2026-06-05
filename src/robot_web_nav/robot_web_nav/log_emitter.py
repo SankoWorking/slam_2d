@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 from collections import deque
@@ -13,6 +14,12 @@ class LogEmitter:
         self._buffer = deque(maxlen=self.BUFFER_SIZE)
         self._lock = threading.Lock()
         self._subscribers = []
+        self._console_info = os.environ.get('WEB_NAV_CONSOLE_INFO', '').lower() in (
+            '1',
+            'true',
+            'yes',
+            'on',
+        )
 
     def _append(self, level, module, message):
         entry = {
@@ -30,7 +37,8 @@ class LogEmitter:
                 pass
 
     def info(self, module, message):
-        self._node.get_logger().info(f'[{module}] {message}')
+        if self._console_info:
+            self._node.get_logger().info(f'[{module}] {message}')
         self._append('info', module, message)
 
     def warn(self, module, message):

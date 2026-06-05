@@ -101,6 +101,35 @@
           <input type="range" id="ang-speed" min="0.1" max="1.5" step="0.05" value="0.80" aria-label="角速度">
         </div>
         <button id="btn-claim" class="btn btn-secondary btn-block">申请控制权</button>
+        <div class="ctrl-diagnostics">
+          <div class="ctrl-diag-row">
+            <span>速度</span>
+            <span id="ctrl-diag-velocity" class="diag-value">vx 0.00 / wz 0.00</span>
+          </div>
+          <div class="ctrl-diag-row">
+            <span>/cmd_vel</span>
+            <span id="ctrl-diag-cmdvel" class="badge badge-bad">0</span>
+          </div>
+          <div class="ctrl-diag-row">
+            <span>底盘</span>
+            <span id="ctrl-diag-chassis" class="badge badge-warn">无状态</span>
+          </div>
+          <div class="ctrl-diag-row">
+            <span>端口</span>
+            <span id="ctrl-diag-port" class="diag-value">--</span>
+          </div>
+          <div class="ctrl-diag-row">
+            <span>写入</span>
+            <span id="ctrl-diag-write" class="diag-value">--</span>
+          </div>
+          <div class="ctrl-diag-row">
+            <span>命令</span>
+            <span id="ctrl-diag-cmd-age" class="diag-value">--</span>
+          </div>
+          <div id="ctrl-diag-error-row" class="ctrl-diag-error hidden">
+            <span id="ctrl-diag-error"></span>
+          </div>
+        </div>
       </div>
 
       <!-- Waypoints -->

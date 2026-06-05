@@ -13,9 +13,8 @@ def launch_setup(context, *args, **kwargs):
 
     params_file = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
     map_name = LaunchConfiguration('map').perform(context)
+    log_level = LaunchConfiguration('log_level').perform(context)
     map_yaml_file = os.path.join(pkg_dir, 'maps', f'{map_name}.yaml')
-
-    print(f"Loading map from: {map_yaml_file}")
 
     return [
         IncludeLaunchDescription(
@@ -24,6 +23,7 @@ def launch_setup(context, *args, **kwargs):
                 'map': map_yaml_file,
                 'params_file': params_file,
                 'use_sim_time': 'false',
+                'log_level': log_level,
             }.items()
         ),
     ]
@@ -35,8 +35,14 @@ def generate_launch_description():
         default_value='map',
         description='Map name (without .yaml extension) in robot_bringup/maps/',
     )
+    log_level_arg = DeclareLaunchArgument(
+        'log_level',
+        default_value='warn',
+        description='ROS log level for Nav2 bringup',
+    )
 
     return LaunchDescription([
         map_arg,
+        log_level_arg,
         OpaqueFunction(function=launch_setup),
     ])

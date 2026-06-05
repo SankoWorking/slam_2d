@@ -12,6 +12,7 @@ const ctrl = {
   sendTimer: null,
   pendingKeys: new Set(),
   watchdogTimer: null,
+  activePointers: new Map(),
 };
 
 const SEND_INTERVAL = 200;
@@ -42,31 +43,19 @@ window.addEventListener('load', () => {
   // D-pad buttons
   document.querySelectorAll('.dpad-btn').forEach(btn => {
     const key = btn.getAttribute('data-key');
-    const start = (e) => {
-      e.preventDefault();
-      if (!ctrl.owned) {
-        ctrl.pendingKeys.add(key);
-        sendMessage({ type: 'claim_control' });
-        flashClaimHint();
-        return;
-      }
-      activateKey(key);
-    };
-    const end = (e) => {
-      e.preventDefault();
-      if (key !== 'stop') {
-        ctrl.pressed.delete(key);
-        applyPressed();
-      }
-      btn.classList.remove('pressed');
-      if (ctrl.pressed.size === 0) stopSendLoop();
-    };
-    btn.addEventListener('mousedown', start);
-    btn.addEventListener('mouseup', end);
-    btn.addEventListener('mouseleave', end);
-    btn.addEventListener('touchstart', start, { passive: false });
-    btn.addEventListener('touchend', end, { passive: false });
-    btn.addEventListener('touchcancel', end, { passive: false });
+    if (window.PointerEvent) {
+      btn.addEventListener('pointerdown', (e) => startButtonPress(e, btn, key));
+      btn.addEventListener('pointerup', (e) => endButtonPress(e, btn, key));
+      btn.addEventListener('pointercancel', (e) => endButtonPress(e, btn, key));
+      btn.addEventListener('lostpointercapture', (e) => endButtonPress(e, btn, key));
+    } else {
+      btn.addEventListener('mousedown', (e) => startButtonPress(e, btn, key));
+      btn.addEventListener('mouseup', (e) => endButtonPress(e, btn, key));
+      btn.addEventListener('mouseleave', (e) => endButtonPress(e, btn, key));
+      btn.addEventListener('touchstart', (e) => startButtonPress(e, btn, key), { passive: false });
+      btn.addEventListener('touchend', (e) => endButtonPress(e, btn, key), { passive: false });
+      btn.addEventListener('touchcancel', (e) => endButtonPress(e, btn, key), { passive: false });
+    }
   });
 
   // Keyboard fallback (only when control is owned and input not focused)
@@ -79,11 +68,10 @@ window.addEventListener('load', () => {
     if (!k) return;
     e.preventDefault();
     if (k === 'stop') {
-      ctrl.pressed.clear();
-      document.querySelectorAll('.dpad-btn').forEach(b => b.classList.remove('pressed'));
-    } else {
-      ctrl.pressed.add(k);
+      activateKey(k);
+      return;
     }
+    ctrl.pressed.add(k);
     applyPressed();
     startSendLoop();
   });
@@ -97,6 +85,48 @@ window.addEventListener('load', () => {
   });
 });
 
+function startButtonPress(e, btn, key) {
+  e.preventDefault();
+  if (e.pointerId !== undefined) {
+    ctrl.activePointers.set(e.pointerId, key);
+    try {
+      btn.setPointerCapture(e.pointerId);
+    } catch (_) {}
+  }
+  if (!ctrl.owned) {
+    ctrl.pendingKeys.add(key);
+    sendMessage({ type: 'claim_control' });
+    flashClaimHint();
+    return;
+  }
+  activateKey(key);
+}
+
+function endButtonPress(e, btn, key) {
+  e.preventDefault();
+  if (e.pointerId !== undefined) {
+    const activeKey = ctrl.activePointers.get(e.pointerId);
+    if (!activeKey && e.type === 'lostpointercapture') return;
+    if (activeKey && activeKey !== key) key = activeKey;
+    ctrl.activePointers.delete(e.pointerId);
+    try {
+      if (btn.hasPointerCapture(e.pointerId)) btn.releasePointerCapture(e.pointerId);
+    } catch (_) {}
+  }
+  if (!ctrl.owned) {
+    if (!hasActivePointerForKey(key)) ctrl.pendingKeys.delete(key);
+    return;
+  }
+  releaseKey(key);
+}
+
+function hasActivePointerForKey(key) {
+  for (const activeKey of ctrl.activePointers.values()) {
+    if (activeKey === key) return true;
+  }
+  return false;
+}
+
 function activateKey(key) {
   if (key === 'stop') {
     ctrl.pressed.clear();
@@ -107,6 +137,8 @@ function activateKey(key) {
       stopBtn.classList.add('pressed');
       setTimeout(() => stopBtn.classList.remove('pressed'), 120);
     }
+    stopSendLoop();
+    return;
   } else {
     ctrl.pressed.add(key);
     applyPressed();
@@ -115,6 +147,16 @@ function activateKey(key) {
   const btn = document.querySelector(`.dpad-btn[data-key="${key}"]`);
   if (btn) btn.classList.add('pressed');
   startSendLoop();
+}
+
+function releaseKey(key) {
+  if (key !== 'stop') {
+    ctrl.pressed.delete(key);
+    applyPressed();
+  }
+  const btn = document.querySelector(`.dpad-btn[data-key="${key}"]`);
+  if (btn) btn.classList.remove('pressed');
+  if (ctrl.pressed.size === 0) stopSendLoop();
 }
 
 function replayPendingKeys() {
@@ -205,6 +247,7 @@ registerHandler('control_status', (msg) => {
   if (wasOwned && !ctrl.owned) {
     ctrl.pressed.clear();
     ctrl.pendingKeys.clear();
+    ctrl.activePointers.clear();
     document.querySelectorAll('.dpad-btn').forEach(b => b.classList.remove('pressed'));
     stopSendLoop(false);
   }
@@ -220,7 +263,83 @@ registerHandler('control_status', (msg) => {
     ownerEl.textContent = `占用: ${owner}`;
     ownerEl.className = 'small badge badge-bad';
   }
+  updateControlDiagnostics(msg);
 });
+
+function updateControlDiagnostics(msg) {
+  const velocityEl = document.getElementById('ctrl-diag-velocity');
+  const cmdvelEl = document.getElementById('ctrl-diag-cmdvel');
+  const chassisEl = document.getElementById('ctrl-diag-chassis');
+  const portEl = document.getElementById('ctrl-diag-port');
+  const writeEl = document.getElementById('ctrl-diag-write');
+  const cmdAgeEl = document.getElementById('ctrl-diag-cmd-age');
+  const errorRow = document.getElementById('ctrl-diag-error-row');
+  const errorEl = document.getElementById('ctrl-diag-error');
+  if (!velocityEl) return;
+
+  const lx = Number(msg.linear_x || 0);
+  const az = Number(msg.angular_z || 0);
+  velocityEl.textContent = `vx ${lx.toFixed(2)} / wz ${az.toFixed(2)}`;
+
+  const subscriberCount = Number(msg.cmd_vel_subscribers || 0);
+  cmdvelEl.textContent = `${subscriberCount}`;
+  cmdvelEl.className = subscriberCount > 0 ? 'badge badge-good' : 'badge badge-bad';
+
+  const chassis = msg.chassis || {};
+  if (!chassis.available) {
+    chassisEl.textContent = '无状态';
+    chassisEl.className = 'badge badge-warn';
+    portEl.textContent = '--';
+    writeEl.textContent = '--';
+    cmdAgeEl.textContent = '--';
+    hideControlError(errorRow, errorEl);
+    return;
+  }
+
+  portEl.textContent = chassis.port || '--';
+
+  if (chassis.stale) {
+    chassisEl.textContent = '超时';
+    chassisEl.className = 'badge badge-bad';
+  } else if (chassis.connected && chassis.port_open) {
+    chassisEl.textContent = '已连接';
+    chassisEl.className = 'badge badge-good';
+  } else if (chassis.port_open) {
+    chassisEl.textContent = '未就绪';
+    chassisEl.className = 'badge badge-warn';
+  } else {
+    chassisEl.textContent = '未连接';
+    chassisEl.className = 'badge badge-bad';
+  }
+
+  if (!chassis.has_last_cmd) {
+    writeEl.textContent = '--';
+    cmdAgeEl.textContent = '--';
+  } else {
+    writeEl.textContent = chassis.last_write_ok ? 'OK' : '失败';
+    cmdAgeEl.textContent = formatAge(chassis.last_cmd_age);
+  }
+
+  const err = chassis.last_error || chassis.parse_error || '';
+  if (err) {
+    errorEl.textContent = err;
+    errorRow.classList.remove('hidden');
+  } else {
+    hideControlError(errorRow, errorEl);
+  }
+}
+
+function hideControlError(row, el) {
+  if (el) el.textContent = '';
+  if (row) row.classList.add('hidden');
+}
+
+function formatAge(value) {
+  const age = Number(value);
+  if (!Number.isFinite(age) || age < 0) return '--';
+  if (age < 10) return `${age.toFixed(1)}s`;
+  return `${age.toFixed(0)}s`;
+}
 
 function updateClaimUI() {
   const btn = document.getElementById('btn-claim');
@@ -233,7 +352,10 @@ function updateClaimUI() {
     btn.classList.remove('btn-danger');
     btn.classList.add('btn-secondary');
   }
-  document.querySelectorAll('.dpad-btn').forEach(b => b.disabled = !ctrl.owned);
+  document.querySelectorAll('.dpad-btn').forEach(b => {
+    b.classList.toggle('dpad-unowned', !ctrl.owned);
+    b.setAttribute('aria-disabled', ctrl.owned ? 'false' : 'true');
+  });
 }
 
 // Release on tab close

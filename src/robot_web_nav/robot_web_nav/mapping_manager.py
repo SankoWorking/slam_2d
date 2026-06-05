@@ -48,7 +48,14 @@ class MappingManager:
                 return self._get_status_locked()
 
             launch_file = self._BACKENDS[backend]
-            cmd = ['ros2', 'launch', 'robot_bringup', launch_file]
+            log_level = os.environ.get('WEB_NAV_CHILD_LOG_LEVEL', 'warn')
+            cmd = [
+                'ros2',
+                'launch',
+                'robot_bringup',
+                launch_file,
+                f'log_level:={log_level}',
+            ]
             try:
                 kwargs = {
                     'stdout': subprocess.PIPE,

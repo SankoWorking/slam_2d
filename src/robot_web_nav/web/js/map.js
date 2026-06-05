@@ -10,6 +10,14 @@ let dragStart = { x: 0, y: 0 };
 let dragOffsetStart = { x: 0, y: 0 };
 let lastPinchDist = 0;
 let lastPinchCenter = { x: 0, y: 0 };
+let touchStart = null;
+let touchMode = 'none';
+let lastTap = null;
+
+const TAP_MAX_MS = 300;
+const TAP_MOVE_PX = 14;
+const DOUBLE_TAP_MS = 380;
+const DOUBLE_TAP_PX = 32;
 
 // Robot pose smoothing
 let smoothPose = null;       // {x, y, yaw} in world coords
@@ -36,7 +44,8 @@ window.addEventListener('load', () => {
 
   mapCanvas.addEventListener('touchstart', onTouchStart, { passive: false });
   mapCanvas.addEventListener('touchmove', onTouchMove, { passive: false });
-  mapCanvas.addEventListener('touchend', onTouchEnd);
+  mapCanvas.addEventListener('touchend', onTouchEnd, { passive: false });
+  mapCanvas.addEventListener('touchcancel', onTouchCancel, { passive: false });
 
   mapCanvas.addEventListener('dblclick', onMapDblClick);
 
@@ -468,25 +477,7 @@ function onPointerUp(e) {
   // Initial pose: release to confirm
   if (setPoseMode && setPoseStart) {
     const pos = getCanvasPos(e);
-    const [px, py] = screenToPixel(setPoseStart.sx, setPoseStart.sy);
-    if (!isPixelInsideMap(px, py)) {
-      setPoseStart = null;
-      setPoseCurrent = null;
-      renderMap();
-      return;
-    }
-    const [wx, wy] = screenToWorld(setPoseStart.sx, setPoseStart.sy);
-    let yaw = 0;
-    if (setPoseCurrent) {
-      const dx = pos.x - setPoseStart.sx;
-      const dy = pos.y - setPoseStart.sy;
-      if (Math.sqrt(dx * dx + dy * dy) > 10) {
-        yaw = Math.atan2(-dy, dx); // screen Y inverted
-      }
-    }
-    sendMessage({ type: 'set_initial_pose', x: wx, y: wy, yaw: yaw });
-    setPoseStart = null;
-    setPoseCurrent = null;
+    finishSetPoseAtScreen(pos.x, pos.y);
     return;
   }
   isDragging = false;
@@ -505,13 +496,41 @@ function onWheel(e) {
 }
 
 function onMapDblClick(e) {
-  if (setPoseMode) return; // Don't add waypoints in set-pose mode
-  if (state.liveMapActive) return; // Live SLAM preview is not a persisted map yet
-  if (!state.mapMeta) return;
+  e.preventDefault();
+  e.stopPropagation();
   const pos = getCanvasPos(e);
-  const [px, py] = screenToPixel(pos.x, pos.y);
-  if (!isPixelInsideMap(px, py)) return;
-  const [wx, wy] = screenToWorld(pos.x, pos.y);
+  openWaypointOverlayAtScreen(pos.x, pos.y);
+}
+
+function finishSetPoseAtScreen(sx, sy) {
+  const [px, py] = screenToPixel(setPoseStart.sx, setPoseStart.sy);
+  if (!isPixelInsideMap(px, py)) {
+    setPoseStart = null;
+    setPoseCurrent = null;
+    renderMap();
+    return;
+  }
+  const [wx, wy] = screenToWorld(setPoseStart.sx, setPoseStart.sy);
+  let yaw = 0;
+  if (setPoseCurrent) {
+    const dx = sx - setPoseStart.sx;
+    const dy = sy - setPoseStart.sy;
+    if (Math.sqrt(dx * dx + dy * dy) > 10) {
+      yaw = Math.atan2(-dy, dx); // screen Y inverted
+    }
+  }
+  sendMessage({ type: 'set_initial_pose', x: wx, y: wy, yaw: yaw });
+  setPoseStart = null;
+  setPoseCurrent = null;
+}
+
+function openWaypointOverlayAtScreen(sx, sy) {
+  if (setPoseMode) return false; // Don't add waypoints in set-pose mode
+  if (state.liveMapActive) return false; // Live SLAM preview is not a persisted map yet
+  if (!state.mapMeta) return false;
+  const [px, py] = screenToPixel(sx, sy);
+  if (!isPixelInsideMap(px, py)) return false;
+  const [wx, wy] = screenToWorld(sx, sy);
   state.pendingClick = { px, py, wx, wy };
   document.getElementById('overlay-coords').textContent =
     `世界坐标: (${wx.toFixed(2)}, ${wy.toFixed(2)})`;
@@ -520,15 +539,28 @@ function onMapDblClick(e) {
   document.getElementById('map-overlay').classList.remove('hidden');
   setTimeout(() => input.focus(), 100);
   renderMap();
+  return true;
 }
 
 function onTouchStart(e) {
   e.preventDefault();
   if (e.touches.length === 1) {
+    const touch = e.touches[0];
+    touchMode = 'single';
+    touchStart = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+    if (setPoseMode && state.mapMeta) {
+      const pos = touchToCanvasPos(touch);
+      setPoseStart = { sx: pos.x, sy: pos.y };
+      setPoseCurrent = { sx: pos.x, sy: pos.y };
+      return;
+    }
     isDragging = true;
-    dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    dragStart = { x: touch.clientX, y: touch.clientY };
     dragOffsetStart = { ...viewOffset };
   } else if (e.touches.length === 2) {
+    touchMode = 'pinch';
+    touchStart = null;
+    lastTap = null;
     isDragging = false;
     lastPinchDist = pinchDist(e.touches);
     lastPinchCenter = pinchCenter(e.touches);
@@ -537,6 +569,12 @@ function onTouchStart(e) {
 
 function onTouchMove(e) {
   e.preventDefault();
+  if (setPoseMode && setPoseStart && e.touches.length === 1) {
+    const pos = touchToCanvasPos(e.touches[0]);
+    setPoseCurrent = { sx: pos.x, sy: pos.y };
+    renderMap();
+    return;
+  }
   if (e.touches.length === 1 && isDragging) {
     viewOffset.x = dragOffsetStart.x + (e.touches[0].clientX - dragStart.x);
     viewOffset.y = dragOffsetStart.y + (e.touches[0].clientY - dragStart.y);
@@ -560,7 +598,67 @@ function onTouchMove(e) {
 }
 
 function onTouchEnd(e) {
-  if (e.touches.length === 0) isDragging = false;
+  e.preventDefault();
+  if (setPoseMode && setPoseStart && e.changedTouches.length > 0) {
+    const pos = touchToCanvasPos(e.changedTouches[0]);
+    finishSetPoseAtScreen(pos.x, pos.y);
+    touchMode = 'none';
+    touchStart = null;
+    return;
+  }
+
+  if (e.touches.length === 0) {
+    isDragging = false;
+    mapCanvas.style.cursor = setPoseMode ? 'cell' : 'crosshair';
+
+    if (touchMode === 'single' && touchStart && e.changedTouches.length > 0) {
+      const touch = e.changedTouches[0];
+      const now = Date.now();
+      const moved = distance(
+        touch.clientX,
+        touch.clientY,
+        touchStart.x,
+        touchStart.y
+      );
+      if ((now - touchStart.time) <= TAP_MAX_MS && moved <= TAP_MOVE_PX) {
+        const pos = touchToCanvasPos(touch);
+        if (
+          lastTap
+          && (now - lastTap.time) <= DOUBLE_TAP_MS
+          && distance(pos.x, pos.y, lastTap.x, lastTap.y) <= DOUBLE_TAP_PX
+        ) {
+          lastTap = null;
+          openWaypointOverlayAtScreen(pos.x, pos.y);
+        } else {
+          lastTap = { x: pos.x, y: pos.y, time: now };
+        }
+      }
+    }
+    touchMode = 'none';
+    touchStart = null;
+  }
+}
+
+function onTouchCancel(e) {
+  e.preventDefault();
+  isDragging = false;
+  touchMode = 'none';
+  touchStart = null;
+  setPoseStart = null;
+  setPoseCurrent = null;
+  mapCanvas.style.cursor = setPoseMode ? 'cell' : 'crosshair';
+  renderMap();
+}
+
+function touchToCanvasPos(touch) {
+  const rect = mapCanvas.getBoundingClientRect();
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+function distance(x1, y1, x2, y2) {
+  const dx = x1 - x2;
+  const dy = y1 - y2;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 function pinchDist(t) {

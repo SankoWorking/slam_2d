@@ -15,6 +15,9 @@ def launch_setup(context, *args, **kwargs):
     rviz = context.launch_configurations.get('rviz', 'false')
     map_name = context.launch_configurations.get('map', 'map')
     web_port = context.launch_configurations.get('web_port', '9090')
+    chassis_port = context.launch_configurations.get('chassis_port', '/dev/ttyACM0')
+    lidar_port = context.launch_configurations.get('lidar_port', '/dev/ttyUSB0')
+    log_level = context.launch_configurations.get('log_level', 'warn')
 
     actions = []
 
@@ -24,7 +27,12 @@ def launch_setup(context, *args, **kwargs):
                 PythonLaunchDescriptionSource(
                     os.path.join(get_package_share_directory('robot_bringup'),
                                  'launch', 'bringup.launch.py')
-                )
+                ),
+                launch_arguments={
+                    'chassis_port': chassis_port,
+                    'lidar_port': lidar_port,
+                    'log_level': log_level,
+                }.items(),
             )
         )
 
@@ -34,7 +42,10 @@ def launch_setup(context, *args, **kwargs):
                 PythonLaunchDescriptionSource(
                     os.path.join(pkg_bringup, 'launch', 'navigation.launch.py')
                 ),
-                launch_arguments={'map': map_name}.items(),
+                launch_arguments={
+                    'map': map_name,
+                    'log_level': log_level,
+                }.items(),
             )
         )
 
@@ -45,7 +56,10 @@ def launch_setup(context, *args, **kwargs):
                     os.path.join(get_package_share_directory('robot_web_nav'),
                                  'launch', 'web_nav.launch.py')
                 ),
-                launch_arguments={'port': web_port}.items(),
+                launch_arguments={
+                    'port': web_port,
+                    'log_level': log_level,
+                }.items(),
             )
         )
 
@@ -69,5 +83,8 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('map', default_value='map'),
         DeclareLaunchArgument('web_port', default_value='9090'),
+        DeclareLaunchArgument('chassis_port', default_value='/dev/ttyACM0'),
+        DeclareLaunchArgument('lidar_port', default_value='/dev/ttyUSB0'),
+        DeclareLaunchArgument('log_level', default_value='warn'),
         OpaqueFunction(function=launch_setup),
     ])

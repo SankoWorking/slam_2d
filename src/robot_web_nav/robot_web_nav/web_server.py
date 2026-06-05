@@ -15,6 +15,7 @@ from aiohttp import web, WSMsgType
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import OccupancyGrid, Path
 from PIL import Image
+from std_msgs.msg import String
 
 from .log_emitter import LogEmitter
 from .map_service import MapService
@@ -117,6 +118,12 @@ class WebNavNode(Node):
         self._last_live_map_payload = None
         self._last_live_map_sent_at = 0.0
         self._live_map_lock = threading.Lock()
+        self._last_chassis_status = None
+        self._last_chassis_status_at = 0.0
+        self._chassis_status_lock = threading.Lock()
+        self._chassis_status_sub = self.create_subscription(
+            String, '/chassis/status', self._on_chassis_status, 10
+        )
 
         # Reasonable defaults matching nav2_params.yaml velocity caps
         self._control.set_limits(max_linear=0.3, max_angular=1.0)
@@ -132,6 +139,51 @@ class WebNavNode(Node):
         self._log.info('init', f'Web dir: {self._web_dir}')
         self._log.info('init', f'Maps dir: {maps_dir}')
         self._log.info('init', f'Available maps: {self._map_service.list_maps()}')
+
+    def get_chassis_status(self) -> dict:
+        with self._chassis_status_lock:
+            status = dict(self._last_chassis_status) if self._last_chassis_status else None
+            received_at = self._last_chassis_status_at
+
+        if status is None:
+            return {
+                'available': False,
+                'stale': True,
+            }
+
+        age = max(0.0, time.time() - received_at)
+        status['available'] = True
+        status['age'] = round(age, 2)
+        status['stale'] = age > 3.0
+        return status
+
+    def _on_chassis_status(self, msg: String):
+        try:
+            status = json.loads(msg.data)
+            if not isinstance(status, dict):
+                raise ValueError('status payload is not an object')
+        except Exception as e:
+            status = {
+                'connected': False,
+                'port_open': False,
+                'last_write_ok': False,
+                'parse_error': str(e),
+                'raw': msg.data[:160],
+            }
+
+        with self._chassis_status_lock:
+            self._last_chassis_status = status
+            self._last_chassis_status_at = time.time()
+
+        if _main_loop is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                _broadcast_control_status(self),
+                _main_loop,
+            )
+        except Exception as e:
+            self.get_logger().warn(f'chassis status broadcast error: {e}')
 
     def _on_plan(self, msg: Path):
         """Receive planned path from Nav2 and broadcast to clients."""
@@ -416,6 +468,8 @@ async def _handle_message(ws: web.WebSocketResponse, node: WebNavNode, raw: str)
                 'type': 'error',
                 'message': 'You do not own manual control. Send claim_control first.',
             })
+        else:
+            await _broadcast_control_status(node)
 
     elif msg_type == 'start_localization':
         ok = node._localization.trigger_global()
@@ -617,7 +671,7 @@ async def _send_map_data_all(node: WebNavNode):
 
 
 async def _send_control_status_to(ws: web.WebSocketResponse, node: WebNavNode):
-    await ws.send_json({'type': 'control_status', **node._control.get_status()})
+    await ws.send_json({'type': 'control_status', **_get_control_status(node)})
 
 
 async def _send_localization_status_to(ws: web.WebSocketResponse, node: WebNavNode):
@@ -628,8 +682,15 @@ async def _send_mapping_status_to(ws: web.WebSocketResponse, node: WebNavNode):
     await ws.send_json({'type': 'mapping_status', **node._mapping.get_status()})
 
 
-async def _broadcast_control_status(node: WebNavNode):
-    await _broadcast(node, {'type': 'control_status', **node._control.get_status()})
+async def _broadcast_control_status(node: WebNavNode, control_status: dict = None):
+    await _broadcast(node, {'type': 'control_status', **_get_control_status(node, control_status)})
+
+
+def _get_control_status(node: WebNavNode, control_status: dict = None) -> dict:
+    status = dict(control_status) if control_status is not None else node._control.get_status()
+    status['cmd_vel_subscribers'] = node.count_subscribers('/cmd_vel')
+    status['chassis'] = node.get_chassis_status()
+    return status
 
 
 async def _broadcast_localization_status(node: WebNavNode, status: dict):
@@ -730,7 +791,7 @@ def _on_control_status(node: WebNavNode, status: dict):
         return
     try:
         asyncio.run_coroutine_threadsafe(
-            _broadcast(node, {'type': 'control_status', **status}),
+            _broadcast_control_status(node, status),
             _main_loop,
         )
     except Exception as e:

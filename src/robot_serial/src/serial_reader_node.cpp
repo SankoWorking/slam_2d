@@ -1,20 +1,47 @@
 #include "robot_serial/serial_reader_node.hpp"
 
+#include <sstream>
+
 SerialReaderNode::SerialReaderNode () : Node("serial_reader_node"){
     running_ = true;
     data_ready_ = false;
+    serial_connected_ = false;
+    last_write_ok_ = false;
+    has_last_cmd_ = false;
+    has_last_read_ = false;
+    last_cmd_time_ = 0.0;
+    last_read_time_ = 0.0;
+    last_cmd_linear_x_ = 0.0;
+    last_cmd_linear_y_ = 0.0;
+    last_cmd_angular_z_ = 0.0;
     shared_buffer_.reserve(1024);
     node_clock_ = this->get_clock();
-    serial_port_name_ = this->declare_parameter<std::string>("serial_port", "/dev/chassis");
+    serial_port_name_ = this->declare_parameter<std::string>("serial_port", "/dev/ttyACM0");
     vel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("velocity", 10);
     imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("imu/data_raw", 10);
+    status_pub_ = this->create_publisher<std_msgs::msg::String>("/chassis/status", 10);
+    status_timer_ = this->create_wall_timer(
+            std::chrono::seconds(1),
+            std::bind(&SerialReaderNode::publishStatus, this));
     cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", 10, std::bind(&SerialReaderNode::cmdVelCallback, this, std::placeholders::_1));
     try {
         serial_port_.Open(serial_port_name_);
         serial_port_.SetBaudRate(LibSerial::BaudRate::BAUD_115200);
+        {
+            std::lock_guard<std::mutex> status_lock(status_mutex_);
+            serial_connected_ = true;
+            last_write_ok_ = true;
+            last_error_.clear();
+        }
         RCLCPP_INFO(this->get_logger(), "Serial started: %s", serial_port_name_.c_str());
     } catch (const std::exception &e) {
+        {
+            std::lock_guard<std::mutex> status_lock(status_mutex_);
+            serial_connected_ = false;
+            last_write_ok_ = false;
+            last_error_ = e.what();
+        }
         RCLCPP_ERROR(
             this->get_logger(),
             "Can't open serial port %s: %s",
@@ -33,8 +60,11 @@ SerialReaderNode::~SerialReaderNode () {
     buffer_cond_.notify_all();
     if (read_thread_.joinable()) read_thread_.join();
     if (parse_thread_.joinable()) parse_thread_.join();
-    if (serial_port_.IsOpen()) serial_port_.Close();
-    RCLCPP_INFO(this->get_logger(), "Node Closed!");
+    {
+        std::lock_guard<std::mutex> serial_lock(serial_mutex_);
+        if (serial_port_.IsOpen()) serial_port_.Close();
+    }
+    RCLCPP_DEBUG(this->get_logger(), "Node closed");
 }
 
 
@@ -44,6 +74,15 @@ SerialReaderNode::~SerialReaderNode () {
  * @param TODO
  */
 void SerialReaderNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    {
+        std::lock_guard<std::mutex> status_lock(status_mutex_);
+        has_last_cmd_ = true;
+        last_cmd_time_ = node_clock_->now().seconds();
+        last_cmd_linear_x_ = msg->linear.x;
+        last_cmd_linear_y_ = msg->linear.y;
+        last_cmd_angular_z_ = msg->angular.z;
+    }
+
     int16_t x_speed = static_cast<int16_t>(msg->linear.x * 1000.0);
     int16_t y_speed = static_cast<int16_t>(msg->linear.y * 1000.0);
     int16_t z_speed = static_cast<int16_t>(msg->angular.z * 1000.0);
@@ -72,12 +111,33 @@ void SerialReaderNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr
     try {
         std::lock_guard<std::mutex> serial_lock(serial_mutex_);
         if (!serial_port_.IsOpen()) {
+            std::lock_guard<std::mutex> status_lock(status_mutex_);
+            serial_connected_ = false;
+            last_write_ok_ = false;
+            last_error_ = "serial port is not open";
             return;
         }
         serial_port_.Write(frame);
     } catch (const std::exception &e) {
-        RCLCPP_WARN(this->get_logger(), "Failed to write cmd_vel to serial: %s", e.what());
+        {
+            std::lock_guard<std::mutex> status_lock(status_mutex_);
+            serial_connected_ = false;
+            last_write_ok_ = false;
+            last_error_ = e.what();
+        }
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(),
+            *node_clock_,
+            2000,
+            "Failed to write cmd_vel to serial: %s",
+            e.what());
         return;
+    }
+    {
+        std::lock_guard<std::mutex> status_lock(status_mutex_);
+        serial_connected_ = true;
+        last_write_ok_ = true;
+        last_error_.clear();
     }
     RCLCPP_DEBUG(this->get_logger(), "Sent cmd_vel frame to chassis");
 }
@@ -88,7 +148,7 @@ void SerialReaderNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr
  * @brief 串口读取线程回调函数
  */
 void SerialReaderNode::readThread() {
-    RCLCPP_INFO(this->get_logger(), "Read Thread Started");
+    RCLCPP_DEBUG(this->get_logger(), "Serial read thread started");
     LibSerial::DataBuffer temp_buffer;
     temp_buffer.reserve(128);
     while (rclcpp::ok() && running_) {
@@ -100,6 +160,12 @@ void SerialReaderNode::readThread() {
             }
             if (!temp_buffer.empty()) {
                 {
+                    std::lock_guard<std::mutex> status_lock(status_mutex_);
+                    has_last_read_ = true;
+                    last_read_time_ = node_clock_->now().seconds();
+                    serial_connected_ = true;
+                }
+                {
                     std::lock_guard<std::mutex> lock(buffer_mutex_);
                     shared_buffer_.insert(shared_buffer_.end(), temp_buffer.begin(), temp_buffer.end());
                 }
@@ -109,8 +175,101 @@ void SerialReaderNode::readThread() {
 
         } catch (const LibSerial::ReadTimeout&) {
             continue;
+        } catch (const std::exception &e) {
+            {
+                std::lock_guard<std::mutex> status_lock(status_mutex_);
+                serial_connected_ = false;
+                last_write_ok_ = false;
+                last_error_ = e.what();
+            }
+            RCLCPP_WARN(this->get_logger(), "Serial read stopped: %s", e.what());
+            running_ = false;
+            buffer_cond_.notify_all();
         }
     }
+}
+
+std::string SerialReaderNode::jsonEscape(const std::string& value) {
+    std::ostringstream out;
+    for (char c : value) {
+        switch (c) {
+            case '"':
+                out << "\\\"";
+                break;
+            case '\\':
+                out << "\\\\";
+                break;
+            case '\n':
+                out << "\\n";
+                break;
+            case '\r':
+                out << "\\r";
+                break;
+            case '\t':
+                out << "\\t";
+                break;
+            default:
+                out << c;
+                break;
+        }
+    }
+    return out.str();
+}
+
+void SerialReaderNode::publishStatus() {
+    const double now = node_clock_->now().seconds();
+    bool port_open;
+    bool connected;
+    bool last_write_ok;
+    bool has_last_cmd;
+    bool has_last_read;
+    double last_cmd_age;
+    double last_read_age;
+    double last_cmd_linear_x;
+    double last_cmd_linear_y;
+    double last_cmd_angular_z;
+    std::string last_error;
+
+    {
+        std::lock_guard<std::mutex> serial_lock(serial_mutex_);
+        port_open = serial_port_.IsOpen();
+    }
+
+    {
+        std::lock_guard<std::mutex> status_lock(status_mutex_);
+        connected = serial_connected_ && port_open;
+        last_write_ok = last_write_ok_;
+        has_last_cmd = has_last_cmd_;
+        has_last_read = has_last_read_;
+        last_cmd_age = has_last_cmd_ ? now - last_cmd_time_ : -1.0;
+        last_read_age = has_last_read_ ? now - last_read_time_ : -1.0;
+        last_cmd_linear_x = last_cmd_linear_x_;
+        last_cmd_linear_y = last_cmd_linear_y_;
+        last_cmd_angular_z = last_cmd_angular_z_;
+        last_error = last_error_;
+    }
+
+    std::ostringstream data;
+    data << "{"
+         << "\"port\":\"" << jsonEscape(serial_port_name_) << "\","
+         << "\"port_open\":" << (port_open ? "true" : "false") << ","
+         << "\"connected\":" << (connected ? "true" : "false") << ","
+         << "\"running\":" << (running_.load() ? "true" : "false") << ","
+         << "\"last_write_ok\":" << (last_write_ok ? "true" : "false") << ","
+         << "\"has_last_cmd\":" << (has_last_cmd ? "true" : "false") << ","
+         << "\"has_last_read\":" << (has_last_read ? "true" : "false") << ","
+         << "\"last_cmd_age\":" << last_cmd_age << ","
+         << "\"last_read_age\":" << last_read_age << ","
+         << "\"last_cmd\":{"
+         << "\"linear_x\":" << last_cmd_linear_x << ","
+         << "\"linear_y\":" << last_cmd_linear_y << ","
+         << "\"angular_z\":" << last_cmd_angular_z << "},"
+         << "\"last_error\":\"" << jsonEscape(last_error) << "\""
+         << "}";
+
+    auto status_msg = std_msgs::msg::String();
+    status_msg.data = data.str();
+    status_pub_->publish(status_msg);
 }
 
 
