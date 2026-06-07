@@ -5,20 +5,20 @@ scan_filter:
       type: laser_filters/LaserScanBoxFilter
       params:
         box_frame: base_link
-        max_x: 11.2
-        min_x: 11.0
-        max_y: 1.5
-        min_y: -1.5
-        max_z: 1.0
-        min_z: -1.0
+        max_x: 0.112
+        min_x: 0.11
+        max_y: 0.015
+        min_y: -0.015
+        max_z: 0.01
+        min_z: -0.01
     filter2:
       name: left_pillar_filter
       type: laser_filters/LaserScanBoxFilter
       params:
         box_frame: base_link
-        max_x: 4.0665
-        min_x: 2.6665
-        max_y: -10.1494
-        min_y: -9.04494
-        max_z: 1.0
-        min_z: -1.0
+        max_x: 0.040665
+        min_x: 0.026665
+        max_y: -0.101494
+        min_y: -0.0904494
+        max_z: 0.01
+        min_z: -0.01
