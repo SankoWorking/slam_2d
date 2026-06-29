@@ -205,6 +205,27 @@ global_costmap:
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
 
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+        
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan       # 这里必须和实际雷达话题一致
+          clearing: True     # 允许清除已经移走的障碍物
+          marking: True      # 允许标记新出现的障碍物
+          data_type: "LaserScan"
+          obstacle_max_range: 3.0
+          raytrace_max_range: 3.5
+          
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 2.5
+        inflation_radius: 0.8
+
 lifecycle_manager_navigation:
   ros__parameters:
     use_sim_time: False
