@@ -10,7 +10,7 @@ SerialReaderNode::SerialReaderNode () : Node("serial_reader_node"){
     cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", 10, std::bind(&SerialReaderNode::cmdVelCallback, this, std::placeholders::_1));
     try {
-        serial_port_.Open("/dev/ttyACM0");
+        serial_port_.Open("/dev/chassis");
         serial_port_.SetBaudRate(LibSerial::BaudRate::BAUD_115200);
         RCLCPP_INFO(this->get_logger(), "Serial Started:/dev/ttyACM0");
     } catch (const std::exception &e) {

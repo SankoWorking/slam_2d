@@ -28,7 +28,7 @@ def generate_launch_description():
     lidar_driver_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(sllidar_dir, 'launch', 'sllidar_c1_launch.py')),
         launch_arguments={
-            'serial_port': '/dev/ttyUSB0', 
+            'serial_port': '/dev/rplidar', 
             'frame_id': 'laser_frame',
             'use_sim_time': use_sime_time
         }.items()
